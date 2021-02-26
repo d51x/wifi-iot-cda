@@ -70,7 +70,7 @@ os_timer_t blink_timer;
 //#define LAST_WASH_CNT2_F 	
 uint32_t LAST_WASH_CNT2_F;	
 uint32_t watercnt2_change_dt;
-// показания счетчика после обезжелезывания
+// показания счетчика после обезжелезивания
 #define LAST_WASH_CNT2_2 	sensors_param.cfgdes[11]		// показания счетчика 2 на окончание промывки
 
 #define CLEAN_WATER_VOLUME_DEFAULT 	10000 	// 10 кубов, объем чистой воды до следующей промывки		// можно выставлять через интерпретер
@@ -105,24 +105,6 @@ uint32_t wash_start_dt = 0;		// дата и время начала промыв
 
 uint32_t wash_time = 0;
 /*
-	настройка кол-ва кубов воды до следующей промывки
-	настройка кол-ва дней до следующей промывки ( что раньше наступит - кубы или дни)
-	
-	показания счетчика 1 - вода после обезжелезывателя и умягчителя
-	счетчик 2 стоит на промывке и считает кол-во пройденой воды при промывке и обезжелезывателя, и умягчителя
-	
-	как только показания счетчика 2 изменились более чем на 30 литров и прошло времени более чем 1 день, значит началась промывка.
-	запоминаем дату и время начала промывки
-	запоминаем показания счетчика 1
-	
-	
-	красный светодиод:
-		горит постоянно - превышено кол-во дней с последней промывки или объем воды с послежней промывки ( текущее значения > зафиксированное значение перед началом промывки + кол-во кубов)
-		редко мигает, когда превышение по кубам более 70%
-	
-	кнопка 1 (нажать и держать 5 сек) фиксирует дату и время + показания счетчика 1 перед началом промывки любой?
-	
-	
 	
 	
 */
@@ -140,7 +122,7 @@ typedef struct {
 	uint16_t  wash_state;
 	uint16_t  wash_type;
 	uint32_t wash_start_dt;
-	uint32_t wash_start_cnt_1;		// счетчик 2 на начало промывки (обезжелезывание)
+	uint32_t wash_start_cnt_1;		// счетчик 2 на начало промывки (обезжелезивание)
 	uint32_t wash_start_cnt_f;		// счетчик 2 на начало умягчения
 	uint32_t watercnt2_change_dt;
 	//uint32_t crc32;
@@ -402,11 +384,11 @@ void ICACHE_FLASH_ATTR read_gpio_cb()
 			{
 				// включаем режим промывки умягчителя
 				wash_type = WASH_SOFTENER;
-				// зафиксировать показания счетчика 2 промежуточные (узнаем, сколько воды было потрачено на промывку обезжелезывателя
+				// зафиксировать показания счетчика 2 промежуточные (узнаем, сколько воды было потрачено на промывку обезжелезивателя
 				LAST_WASH_CNT2_F = WATERCNT2;
 				
 			} else {
-				// включаем режим промывки обезжелезывателя
+				// включаем режим промывки обезжелезивателя
 				wash_type = WASH_FERRUM_FREE;
 			}
 		}
@@ -666,6 +648,25 @@ void ICACHE_FLASH_ATTR timerfunc(uint32_t  timersrc) {
 
 void webfunc(char *pbuf) {
 
+	
+	
+	os_sprintf(HTTPBUFF,"<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>"
+						"<tr><th>Счетчик 1 (чистая вода):</th></tr>"
+	);
+	os_sprintf(HTTPBUFF,"<tr><td>текущие показания:</td><td> %d.%03d м³ (%d л)</td></tr>", WATERCNT1 / 1000, WATERCNT1 % 1000, WATERCNT1);
+	os_sprintf(HTTPBUFF,"<tr><td>расход сегодня:</td><td> %d.%03d м³ (%d л)</td></tr>", WATERCNT1_T / 1000, WATERCNT1_T % 1000, WATERCNT1_T);
+	os_sprintf(HTTPBUFF,"<tr><td>расход вчера:</td><td> %d.%03d м³ (%d л)</td></tr>", WATERCNT1_Y / 1000, WATERCNT1_Y % 1000, WATERCNT1_Y);
+	
+	os_sprintf(HTTPBUFF,"<tr /><tr />"
+						"<tr><th>Счетчик 2 (промывочный):</th></tr>"
+						"<tr><td>текущие показания:</td><td> %d.%03d м³ (%d л)</td></tr>"
+	, WATERCNT2 / 1000, WATERCNT2 % 1000, WATERCNT2
+	);
+	
+	os_sprintf(HTTPBUFF,"</table>");
+	//os_sprintf(HTTPBUFF,"<br><br> <b>Счетчик 2 (промывочный):</b>");
+	//os_sprintf(HTTPBUFF,"<br><br> <b>&nbsp;&nbsp;текущие показания:</b> %d.%03d м³ (%d л)", WATERCNT2 / 1000, WATERCNT2 % 1000, WATERCNT2);
+	
 	os_sprintf(HTTPBUFF,"<br> <b>Режим:</b> %s", (wash_state == STATE_WASH ) ? "Промывка" : "Норма");
 	
 	uint32_t water[3];
@@ -673,7 +674,7 @@ void webfunc(char *pbuf) {
 	{
 		if ( wash_type == WASH_FERRUM_FREE ) 
 		{
-			os_sprintf(HTTPBUFF," (обезжелезывание)");
+			os_sprintf(HTTPBUFF," (обезжелезивание)");
 			water[1] = WATERCNT2 - LAST_WASH_CNT2_1;
 			water[2] = 0;
 		}
@@ -686,11 +687,11 @@ void webfunc(char *pbuf) {
 	
 		water[0] = WATERCNT2 - LAST_WASH_CNT2_1;
 		
-		os_sprintf(HTTPBUFF,"<br>Текущая промывка");
+		os_sprintf(HTTPBUFF,"<br><br><b>Текущая промывка</b>");
 	} 
 	else 
 	{
-		os_sprintf(HTTPBUFF,"<br>Предыдущая промывка");
+		os_sprintf(HTTPBUFF,"<br><br><b>Предыдущая промывка</b>");
 	
 		water[0] = 0;		
 		water[1] = 0;
@@ -716,7 +717,7 @@ void webfunc(char *pbuf) {
 						"<th>Умягчение</th>"
 						"</tr>"
 						"<tr  align='center'>"
-						"<td>%d</td><td>%d</td><td>%d</td>"
+						"<td>%d л</td><td>%d л</td><td>%d л</td>"
 						"</tr></table>"
 						, water[0], water[1], water[2]
 				);
@@ -731,7 +732,7 @@ void webfunc(char *pbuf) {
 
 	os_sprintf(HTTPBUFF,"<br> <b>Промывок:</b> %d", wash_cnt);
 
-	os_sprintf(HTTPBUFF,"<br> <b>Чистая вода:</b> %d", clean_water);
+	os_sprintf(HTTPBUFF,"<br> <b>Чистая вода:</b> %d.%03d м³ (%d л)", clean_water/1000, clean_water%1000, clean_water);
 
 	char color[10];
 
@@ -770,5 +771,5 @@ void webfunc(char *pbuf) {
 //os_sprintf(HTTPBUFF,"<br> data4 = %d", (data & ( 1 << 4)) == 0);
 //os_sprintf(HTTPBUFF,"<br> data5 = %d", (data & ( 1 << 5)) == 0); 
 
-os_sprintf(HTTPBUFF,"<br><br> <small>FW ver. %s</small>", "1.46");
+os_sprintf(HTTPBUFF,"<br><br> <small>FW ver. %s</small>", "1.50");
 }
