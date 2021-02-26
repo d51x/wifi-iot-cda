@@ -68,7 +68,9 @@ os_timer_t blink_timer;
 #define LAST_WASH_CNT1 		sensors_param.cfgdes[9]		// показания счетчика 1 на начало промывки
 #define LAST_WASH_CNT2_1 	sensors_param.cfgdes[10]		// показания счетчика 2 на начало промывки
 //#define LAST_WASH_CNT2_F 	
-uint32_t LAST_WASH_CNT2_F;								// показания счетчика после обезжелезывания
+uint32_t LAST_WASH_CNT2_F;	
+uint32_t watercnt2_change_dt;
+// показания счетчика после обезжелезывания
 #define LAST_WASH_CNT2_2 	sensors_param.cfgdes[11]		// показания счетчика 2 на окончание промывки
 
 #define CLEAN_WATER_VOLUME_DEFAULT 	10000 	// 10 кубов, объем чистой воды до следующей промывки		// можно выставлять через интерпретер
@@ -140,7 +142,7 @@ typedef struct {
 	uint32_t wash_start_dt;
 	uint32_t wash_start_cnt_1;		// счетчик 2 на начало промывки (обезжелезывание)
 	uint32_t wash_start_cnt_f;		// счетчик 2 на начало умягчения
-
+	uint32_t watercnt2_change_dt;
 	//uint32_t crc32;
 } rtc_data_t;
 
@@ -174,7 +176,7 @@ uint8_t pcf_data;
 #define GET_TS()(sntp_get_current_timestamp() - sntp_get_timezone()*3600 + sensors_param.utc * 3600)
 #define PASSED_DAY_AFTER_WASH() ( (GET_TS()  - LAST_WASH_DT ) / (3600*24) )
 
-uint32_t ICACHE_FLASH_ATTR calcCRC32(const uint8_t *data, uint16_t sz) {
+/* uint32_t ICACHE_FLASH_ATTR calcCRC32(const uint8_t *data, uint16_t sz) {
   // Обрабатываем все данные, кроме последних четырёх байтов,
   // где и будет храниться проверочная сумма.
   size_t length = sz-4;
@@ -196,7 +198,7 @@ uint32_t ICACHE_FLASH_ATTR calcCRC32(const uint8_t *data, uint16_t sz) {
   }
   return crc;
 }
-
+ */
 
 void ICACHE_FLASH_ATTR blink_one_led(uint8_t led, uint16_t before, uint16_t on_delay, uint16_t off_delay)
 {
@@ -272,6 +274,7 @@ void ICACHE_FLASH_ATTR do_wash_start(uint16_t counter_offset)
 	wash_state = STATE_WASH;
 	wash_type = WASH_FERRUM_FREE;
 	wash_start_dt = GET_TS();
+	watercnt2_change_dt = GET_TS();
 	LAST_WASH_CNT2_F = LAST_WASH_CNT2_1;
 	LAST_WASH_CNT1 = WATERCNT1;		// фиксируем показания счетчика 1 на начало промывки
 	LAST_WASH_CNT2_1 = WATERCNT2 -  counter_offset;		// фиксируем показания счетчика 2 на начало промывки
@@ -326,6 +329,7 @@ void ICACHE_FLASH_ATTR read_gpio_cb()
 			//counter++;
 			WATERCNT2 += COUNTER_IMPL;
 			WATERCNT2_T += COUNTER_IMPL;
+			watercnt2_change_dt = GET_TS();
 		}
 		
 		ts2 = millis();
@@ -372,11 +376,13 @@ void ICACHE_FLASH_ATTR read_gpio_cb()
 		{
 			// включаем режим промывки
 			do_wash_start(0);
+			btn2_pressed = 1;
 		}
 		else
 		{
 			// отключаем режим промывки
 			do_wash_end();
+			btn2_pressed = 1;
 		}	
 		press_flag = 1;		
 	} 
@@ -557,6 +563,7 @@ void ICACHE_FLASH_ATTR startfunc()
 		need_save = 1;
 	}
 	
+	watercnt2_change_dt = rtc_data.watercnt2_change_dt;
 	wash_state = rtc_data.wash_state;
 	wash_type = rtc_data.wash_type;
 	
@@ -604,6 +611,7 @@ void ICACHE_FLASH_ATTR timerfunc(uint32_t  timersrc) {
 	rtc_data.wash_start_cnt_1 = LAST_WASH_CNT2_1;
 	rtc_data.wash_start_cnt_f = LAST_WASH_CNT2_F;
 	rtc_data.wash_start_dt = wash_start_dt;
+	rtc_data.watercnt2_change_dt = watercnt2_change_dt;
 	
 	//uint32_t crc32 = calcCRC32( (uint8_t *)&rtc_data, sizeof(rtc_data_t));
 	//rtc_data.crc32 = crc32;
@@ -645,8 +653,10 @@ void ICACHE_FLASH_ATTR timerfunc(uint32_t  timersrc) {
 	}
 	
 	if ( wash_start_dt > TIMESTAMP_DEFAULT && 
-	    ((GET_TS() - wash_start_dt) / 3600 ) >= 5 
-		) 
+	    //((GET_TS() - wash_start_dt) / 3600 ) >= 5 		// прошло время с начала промывки более 5 часов
+	    //( (GET_TS() - watercnt2_change_dt) / 3600 ) >= 1 // время последнего изменения показаний счетчика 2 и если показания не изменялись более 1 часа, значит промывка завершилась
+	    ( (GET_TS() - watercnt2_change_dt) / 60 ) >= 30 // время последнего изменения показаний счетчика 2 и если показания не изменялись более 30 мин, значит промывка завершилась
+		)
 	{
 		// промывка длится более 5 часов, значит забыли вручную зафиксировать завершение промывки, зафиксируем автоматически
 		// отключаем режим промывки
@@ -760,5 +770,5 @@ void webfunc(char *pbuf) {
 //os_sprintf(HTTPBUFF,"<br> data4 = %d", (data & ( 1 << 4)) == 0);
 //os_sprintf(HTTPBUFF,"<br> data5 = %d", (data & ( 1 << 5)) == 0); 
 
-os_sprintf(HTTPBUFF,"<br><br> <small>FW ver. %s</small>", "1.43");
+os_sprintf(HTTPBUFF,"<br><br> <small>FW ver. %s</small>", "1.46");
 }
