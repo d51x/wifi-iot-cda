@@ -24,6 +24,7 @@ os_timer_t gpio_timer;
 #define GPIO_STATE_CLOSE 0
 #define COUNTER_IMPL 10
 #define AUTO_WASH_START_DELTA 	30			// порог расхода счетчика2 при выключенной промывки для автоопределения начала промывки
+#define AUTO_WASH_END_DELTA 	20			// порог расхода счетчика1 при включенной промывки для автоопределения зазвершения промывки
 #define CLEAN_WATER_PERCENT 70		// порог в %%, после которого сигнализируется красным светодиодом о приближении времени промывки
 #define CLEAN_WATER_VOLUME_DEFAULT 	10000 	// 10 кубов, объем чистой воды до следующей промывки		// можно выставлять через интерпретер
 
@@ -304,7 +305,7 @@ void ICACHE_FLASH_ATTR do_wash_start(uint16_t counter_offset)
 	mqtt_send_wash_start();
 }
 
-void ICACHE_FLASH_ATTR do_wash_end()
+void ICACHE_FLASH_ATTR do_wash_end(uint16_t counter_offset)
 {
 	if ( wash_state == STATE_NORMA ) return;
 	
@@ -407,7 +408,7 @@ void ICACHE_FLASH_ATTR read_gpio_cb()
 		else
 		{
 			// отключаем режим промывки
-			do_wash_end();
+			do_wash_end(0);
 			btn2_pressed = 1;
 		}	
 		press_flag = 1;		
@@ -710,18 +711,23 @@ void ICACHE_FLASH_ATTR timerfunc(uint32_t  timersrc)
 		do_wash_start(AUTO_WASH_START_DELTA);	
 	}
 	
+
+	// автоматическая фиксация завершения промывки
 	uint32_t ts = GET_TS();
 	if ( 	
 		wash_state == STATE_WASH 
 		&& ts > TIMESTAMP_DEFAULT  
 		&& WASH_START_TS > TIMESTAMP_DEFAULT
 		&& WASH_START_TS > wash_end_ts						 // время начала больше времени предыдущего окончания
-	    && (ts - watercnt2_change_ts) / 60  >= WASH_AUTO_END // время последнего изменения показаний счетчика 2 и если показания не изменялись более 30 мин, значит промывка завершилась
+	    && (
+			  (ts - watercnt2_change_ts) / 60  >= WASH_AUTO_END // время последнего изменения показаний счетчика 2 и если показания не изменялись более 30 мин, значит промывка завершилась
+	          || WATERCNT1 - WASH_CNT1_START >= 20				 // показания счетчика 1 изменились на 20 литров (а при промывке у нас счетчик 1 не должен изменять показания)
+		   )
 	   )
 	{
 		// промывка длится более 5 часов, значит забыли вручную зафиксировать завершение промывки, зафиксируем автоматически
 		// отключаем режим промывки
-		do_wash_end();		 // TODO: срабатывает и сбрасывает state
+		do_wash_end(AUTO_WASH_END_DELTA);		 // TODO: срабатывает и сбрасывает state
 	}		
 }
 
@@ -870,5 +876,5 @@ void webfunc(char *pbuf) {
  	// os_sprintf(HTTPBUFF,"<br> watercnt2_change_ts: %d", watercnt2_change_ts); 
  	// os_sprintf(HTTPBUFF,"<br> XXX / TS: %d", GET_TS()); 
 
-	os_sprintf(HTTPBUFF,"<br><br> <small>FW ver. %s</small>", "2.63");
+	os_sprintf(HTTPBUFF,"<br><br> <small>FW ver. %s</small>", "2.64");
 }
