@@ -1,3 +1,7 @@
+//TODO: чтобы не прописывать прерывания для кнопок, индексы можно взять из sensors_param
+// либо прочитать регистр с направлениями mcpdata = MCPread_reg16(0, 0x12
+// sensors_param.mcpdata[0] хранит регистры наситроек
+// запоминать состояния mcpgpio через NVS
 
 static const char* UTAG = "MCP23017";
 
@@ -67,7 +71,7 @@ static const char* UTAG = "MCP23017";
 TaskHandle_t mcp23017_task;
 QueueHandle_t mcp23017_queue;
 
-typedef void (*interrupt_cb)(void *arg);
+typedef void (*interrupt_cb)(void *arg, uint8_t *state);
 
 typedef struct mcp23017_pin_isr {
         uint8_t pin;
@@ -79,7 +83,7 @@ typedef struct mcp23017_pin_isr {
     mcp23017_pin_isr_t *pin_isr; // указатель на массив коллбеков для пинов
     uint8_t pin_isr_cnt;
 
-static void IRAM_ATTR mcp23027_isr_handler(void *arg) {
+static void IRAM_ATTR mcp23017_isr_handler(void *arg) {
     portBASE_TYPE HPTaskAwoken = pdFALSE;
     BaseType_t xHigherPriorityTaskWoken;
 
@@ -104,32 +108,35 @@ static void mcp23017_isr_cb(void *arg) {
             uint16_t data[2];
             if ( xQueueReceive(mcp23017_queue, &data, 0) == pdPASS) 
             {
-                ESP_LOGI(UTAG, " interrput: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[0], data[0], BYTE_TO_BINARY(data[0] >> 8), BYTE_TO_BINARY(data[0]));
-                ESP_LOGI(UTAG, "gpio state: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[1], data[1], BYTE_TO_BINARY(data[1] >> 8), BYTE_TO_BINARY(data[1]));
+                //ESP_LOGI(UTAG, " interrput: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[0], data[0], BYTE_TO_BINARY(data[0] >> 8), BYTE_TO_BINARY(data[0]));
+                //ESP_LOGI(UTAG, "gpio state: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[1], data[1], BYTE_TO_BINARY(data[1] >> 8), BYTE_TO_BINARY(data[1]));
 
                 // check pins with interrupts
                 for ( uint8_t i = 0; i < 16; i++)
                 {
+
+                    
                     if ( BIT_CHECK( data[0], i) != 0)
                     {
-                        // find callbacks for pin
+                        // check pin state
+                        uint8_t state = BIT_CHECK( data[1], i) != 0;                        
+                        ESP_LOGI(UTAG, "pin = %d, state = %d", i+1, state);                        
+                        
+                        // поиск коллбека для нажатия кнопок
                         for ( uint8_t j = 0; j < pin_isr_cnt; j++)
                         {
                             if ( pin_isr[ j ].pin == i )
                             {
-                                // check pin state
-                                uint8_t state = BIT_CHECK( data[1], i) != 0;
-                                ESP_LOGI(UTAG, "pin = %d, state = %d", i+1, state);
-
                                 if (( state == 1 && pin_isr[ j ].intr_type == GPIO_INTR_POSEDGE) || 
-                                    ( state == 0 && pin_isr[ j ].intr_type == GPIO_INTR_NEGEDGE))
+                                    ( state == 0 && pin_isr[ j ].intr_type == GPIO_INTR_NEGEDGE) || 
+                                                    pin_isr[ j ].intr_type == GPIO_INTR_ANYEDGE )
                                 {
                                     // execute callback
-                                    pin_isr[ j ].pin_cb( pin_isr[ j ].args );
+                                    pin_isr[ j ].pin_cb( pin_isr[ j ].args, &state );
                                 }
 
                             }
-                        }                        
+                        }                               
                     }
                 }
             }
@@ -148,7 +155,7 @@ esp_err_t mcp23017_isr_handler_add(uint8_t pin, gpio_int_type_t intr_type, inter
     {
         if ( pin_isr[i].pin_cb == cb && pin_isr[i].pin == pin)
         {
-            ESP_LOGE(TAG, "Callback already registered for pin %d", pin);
+            ESP_LOGE(UTAG, "Callback already registered for pin %d", pin);
             return ESP_FAIL;
         }
     }   
@@ -167,14 +174,24 @@ esp_err_t mcp23017_isr_handler_add(uint8_t pin, gpio_int_type_t intr_type, inter
     return ESP_OK;     
 }
 
-void test_mcp23017_isr_cb(uint8_t pin)
+void test_mcp23017_isr_cb(uint8_t pin, uint8_t *state)
 {
-    ESP_LOGI(TAG, "%s", __func__);
+    ESP_LOGI(UTAG, "%s", __func__);
     //uint8_t *pin = (uint8_t *)(buf);
-    ESP_LOGI(TAG, "pin %d", pin);
+    ESP_LOGI(UTAG, "pin %d, state %d", pin, *state);
 
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
 }
+
+void mcp23017_pir_sensor_cb(uint8_t pin, uint8_t *state)
+{
+    ESP_LOGI(UTAG, "%s", __func__);
+    //uint8_t *pin = (uint8_t *)(buf);
+    ESP_LOGI(UTAG, "pin %d, state %d", pin, *state);
+
+    GPIO_ALL(pin, *state);
+}
+
 
 void startfunc(){
     // выполняется один раз при старте модуля.
@@ -199,17 +216,22 @@ void startfunc(){
     gpio_conf.pin_bit_mask = (1ULL << MCP23017_INTA_PIN);
     gpio_config(&gpio_conf);    
     gpio_install_isr_service(0);
-    gpio_isr_handler_add( MCP23017_INTA_PIN, mcp23027_isr_handler, NULL);  
 
+    // прерывание на кнопки mcp23017
+    gpio_isr_handler_add( MCP23017_INTA_PIN, mcp23017_isr_handler, NULL);  
 
-        // 1 - сразу при нажатии
-        // 2 - только после отпускания
-    mcp23017_isr_handler_add( 0, 1, test_mcp23017_isr_cb, 208);
-    mcp23017_isr_handler_add( 1, 1, test_mcp23017_isr_cb, 209);
-    mcp23017_isr_handler_add( 2, 2, test_mcp23017_isr_cb, 210);
-    mcp23017_isr_handler_add( 3, 2, test_mcp23017_isr_cb, 211);
-    mcp23017_isr_handler_add( 4, 2, test_mcp23017_isr_cb, 212);
-    mcp23017_isr_handler_add( 5, 2, test_mcp23017_isr_cb, 213);
+        // 1 - сразу при нажатии         GPIO_INTR_POSEDGE 
+        // 2 - только после отпускания   GPIO_INTR_NEGEDGE 
+        // 3 - любое состояние           GPIO_INTR_ANYEDGE 
+        // или наоборот, зависит от дефолтного состояния пина 1 = 1 или 0 = 2
+    mcp23017_isr_handler_add( 0, GPIO_INTR_NEGEDGE, test_mcp23017_isr_cb, 208);
+    mcp23017_isr_handler_add( 1, GPIO_INTR_NEGEDGE, test_mcp23017_isr_cb, 209);
+    mcp23017_isr_handler_add( 2, GPIO_INTR_NEGEDGE, test_mcp23017_isr_cb, 210);
+    mcp23017_isr_handler_add( 3, GPIO_INTR_NEGEDGE, test_mcp23017_isr_cb, 211);
+    mcp23017_isr_handler_add( 4, GPIO_INTR_NEGEDGE, test_mcp23017_isr_cb, 212);
+
+    // датчик движения
+    mcp23017_isr_handler_add( 5, GPIO_INTR_ANYEDGE, mcp23017_pir_sensor_cb, 213);
 
 
     mcp23017_queue = xQueueCreate(5, sizeof(uint16_t) * 2);
