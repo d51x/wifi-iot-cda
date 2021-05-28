@@ -1,15 +1,15 @@
 static const char* UTAG = "MCP23017";
-#define FW_VER "0.57"
+#define FW_VER "0.71"
 
 
 /*
 Количество настроек
-Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h)
+Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), WorkMode GPIO, LedErrorGpio, LedOkGpio
 (Доступные значения: 0-20 or (string1, string2, string3, ...))
 
 */
 
-#define BACKLIGHT_TIMEOUT   30 * 1000  // 5 sec
+#define BACKLIGHT_TIMEOUT   5 * 1000  // 5 sec
 #define TEMPSET_STEP 1
 #define HYST_STEP 1
 #define TEMPSET_MIN 100
@@ -27,6 +27,8 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define NIGHT_TIME  sensors_param.cfgdes[6] //23
 #define DAY_TIME    sensors_param.cfgdes[7] //7
 
+#define LED_WORK_MODE_GPIO    sensors_param.cfgdes[8] //214
+
 #define flow_temp data1wire[0]
 #define return_temp data1wire[1]
 
@@ -36,6 +38,8 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define PUMP2_GPIO_DEFAULT 211
 #define ESC_GPIO_DEFAULT 212
 #define VENT_GPIO_DEFAULT 213
+
+#define LED_WORK_MODE_GPIO_DEFAULT 214
 
 #define NIGHT_TIME_DEFAULT 23
 #define DAY_TIME_DEFAULT 7
@@ -52,51 +56,22 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define LCD_BACKLIGHT_STATE BIT_CHECK(sensors_param.lcdled,0)
 
-//#define THERMO_STATE(x) GPIO_ALL_GET(99+x)      // указываем Х номер термостата, 1, 2 и т.д.
 #define THERMO_STATE(x)		BIT_CHECK(sensors_param.thermo[x-1][0],0)
-#define THERMO_ON(x)  {                                         \
-                         if ( GPIO_ALL_GET(x+99) == 0 )         \
-                                GPIO_ALL(99+x,1);               \
-                      }
-
-#define THERMO_OFF(x)  {    \
-                          if ( GPIO_ALL_GET(99+x) == 1 )  GPIO_ALL(99+x,0); \
-                       }
+#define THERMO_ON(x)  { if ( GPIO_ALL_GET(x+99) == 0 ) GPIO_ALL(99+x,1);}
+#define THERMO_OFF(x) { if ( GPIO_ALL_GET(99+x) == 1 ) GPIO_ALL(99+x,0);}
 
 
 #define THERMO_SETPOINT(x)      sensors_param.thermzn[x-1][0]
 #define THERMO_HYSTERESIS(x)	sensors_param.thermzn[x-1][1]
 
-#define THERMO_TEMP_SET(x,y)  {                 \
-        sensors_param.thermzn[x-1][0] = y;      \
-        SAVEOPT;                                \
-        }
+#define THERMO_TEMP_SET(x,y)  { sensors_param.thermzn[x-1][0] = y; SAVEOPT; }
+#define THERMO_HYST_SET(x,y)  { sensors_param.thermzn[x-1][1] = y; SAVEOPT; }
 
-
-#define THERMO_HYST_SET(x,y) {                  \
-        sensors_param.thermzn[x-1][1] = y;      \
-        SAVEOPT;                                \
-}
-
-//int16_t current_temp;  // устанавливать через интерпретер или mqtt
 #define current_temp valdes[0]  // устанавливать через интерпретер или mqtt - valdes[0]
-//int16_t get_current_temp() {
-//    return sht_t;
-//}
 
 // NVSCURRENT_TEMP
 #define SPACE_NAME "d51x"
 #define WORK_MODE_PARAM "workmode"
-/*
- термостат прошивки
-thermo=08D4FFFFFFFF
-thermzn=1D000500280AFFFFFFFFFFFFFFFFFFFFFFFF
-sensors_param.thermzn[n][0] и sensors_param.thermzn[n][1]
-#if termoe - включен в прошивке
-интерпретер
-thermoset(1,251)
-
-*/
 
 #define MCP23017_GPIO0   1 << 0     //0x0001
 #define MCP23017_GPIO1   1 << 1     //0x0002
@@ -209,24 +184,15 @@ typedef enum {
 
 active_kotel_e active_kotel = KOTEL_NONE;
 
-typedef struct {
-    float temp;
-    float tempset;
-    float hyst;
-    uint8_t state;
-    uint8_t schedule;
-} thermo_t;
-
-thermo_t thermo;
-
 #define WORKMODE    work_mode
 #define ADDLISTSENS {200,LSENSFL0,"WorkMode","workmode",&WORKMODE,NULL}, \
-                    {201,LSENSFL1,"Temp","temp",&current_temp,NULL},
+                    {201,LSENSFL1,"Temperature","temp",&current_temp,NULL},
 
 
 uint8_t display_error = 0;
 TimerHandle_t  show_error_timer;
 #define SHOW_ERROR_TIMEOUT 5000
+
 uint32_t last_key_press = 0;
 #define MENU_EXIT_TIMEOUT 10000 // 10 sec
 
@@ -247,17 +213,15 @@ typedef enum {
     BLINK_ALWAYS_ON,
     BLINK_BREATH1,
     BLINK_BREATH2,
-    BLINK_ERROR,
     BLINK_MAX
 } blynk_type_e;
 
 // общая длительность цикла мигания - сумма всех значений
 const led_blynk_data_t blynk_data[BLINK_MAX] = {
-    { {0, 1000},    {0, 0},     {0, 0},     {0, 0}, {0, 0}},   // постоянно выключено
-    { {1000, 0},    {0, 0},     {0, 0},     {0, 0}, {0, 0}},   // постоянно включено
-    { {50, 100},    {0, 1850},  {0, 0},     {0, 0}, {0, 0}},  // 1 вспышка в 2 сек
-    { {50, 100},    {50, 100},  {0, 1700},  {0, 0}, {0, 0}}, // 2 вспышки в 2 сек
-    { {50, 100},    {50, 100},  {50, 100}, {50, 100}, {50, 100}}  // ERROR
+    { {0, 1000},    {0, 0},     {0, 0},     {0, 0},     {0, 0}},    // постоянно выключено
+    { {1000, 0},    {0, 0},     {0, 0},     {0, 0},     {0, 0}},    // постоянно включено
+    { {50, 100},    {0, 1850},  {0, 0},     {0, 0},     {0, 0}},    // 1 вспышка в 2 сек
+    { {50, 100},    {50, 100},  {0, 1700},  {0, 0},     {0, 0}}    // 2 вспышки в 2 сек
 };
 
 typedef struct {
@@ -268,9 +232,7 @@ typedef struct {
 
 static led_blynk_cfg_t cfg;
 
-
-TimerHandle_t  blynk_timer = NULL;
-TimerHandle_t blynk_error_timer = NULL;
+TimerHandle_t blynk_timer = NULL;
 
 
 esp_err_t nvs_param_save(const char* space_name, const char* key, void *param, uint16_t len)
@@ -429,15 +391,20 @@ void lcd_print(uint8_t line, const char *str)
 {
     // если sens_state вздедена датчиками, то дисплей не выводит )))
     if ( display_error == 1 ) return;
+
+    ///uint8_t len = strlen(str);
+    ///ESP_LOGI( UTAG, ">>>>> %d: %s", len, str);
+
     LCD_print(line, str);
 }
 
 void show_display_error_cb(xTimerHandle tmr)   // rtos
 {
-    uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
+    //uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
     display_error = 0;
+    xTimerStop( tmr, 0);
     xTimerDelete(tmr, 10);
-    show_error_timer = NULL;
+    tmr = NULL;
 }
 
 void print_error(const char *str)
@@ -472,7 +439,7 @@ void print_error(const char *str)
 
 void show_display_error(const char *str)
 {
-    ESP_LOGI(UTAG, "%s: display error = %s", __func__, str);
+    //ESP_LOGI(UTAG, "%s: display error = %s", __func__, str);
     display_error = 1;
 
      if ( show_error_timer == NULL )
@@ -522,8 +489,6 @@ void set_active_kotel(mode_e mode)
         GPIO_ALL(100, 0 );
         GPIO_ALL(101, 0 );
     }
-    
-    ESP_LOGI(UTAG, "%s: active kotel = %d, time hour %d, day hour %d, night hour %d ", __func__, active_kotel, time_loc.hour, DAY_TIME, NIGHT_TIME);
 }
 
 void change_work_mode()
@@ -533,10 +498,8 @@ void change_work_mode()
     if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
     ESP_LOGI(UTAG, "%s: work mode = %d", __func__, work_mode);
     nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode));
-
     set_active_kotel( work_mode );
-
-    led_work_mode_blynk(214);
+    //led_work_mode_blynk( LED_WORK_MODE_GPIO );
 }
 
 void switch_menu()
@@ -544,8 +507,6 @@ void switch_menu()
     if ( display_error == 1 ) return;
     menu_idx++;
     if ( menu_idx >= MENU_PAGE_MAX ) menu_idx = MENU_PAGE_TEMPSET;
-    ESP_LOGI(UTAG, "%s: menu index = %d", __func__, menu_idx);
-
     last_key_press = millis();
 }
 
@@ -563,7 +524,7 @@ int round_int_100(int val)
 void show_main_page()
 {
     char str[30];
-    sprintf(str, "%02d:%02d:%02d %02d.%02d.%02d, %d"
+    snprintf(str, 21, "%02d:%02d:%02d %02d.%02d.%02d, %d"
                 , time_loc.hour
                 , time_loc.min
                 , time_loc.sec
@@ -585,11 +546,14 @@ void show_main_page()
     int t2 = round_int_100( return_temp );
     if ( t1 == 255) strcpy(st1, "ER"); else itoa(t1, st1, 10);
     if ( t2 == 255) strcpy(st2, "ER"); else itoa(t2, st2, 10);
-    sprintf(str, "Flow:%s°  Return:%s°"
+
+    snprintf(str, 21, "Flow:%s%c  Return:%s%c"
                 , st1//, data1wire[0] / 100
+                , 0x01
                 //, data1wire[0] % 100
                 , st2//, data1wire[1] / 100
                 //, data1wire[1] % 100
+                , 0x01
             );
     lcd_print(1, str);
 
@@ -602,10 +566,11 @@ void show_main_page()
         case MODE_AUTO:   sprintf(smode, "AUTO"); break;
         default: sprintf(smode, "UKWN"); break;
     }
-    sprintf(str, "Mode: %s  Ul:%d.%1d°"
+    snprintf(str, 21, "Mode: %s  Ul:%d.%1d%c"
                 , smode
                 , sht_t / 10
-                , sht_t % 10);
+                , sht_t % 10
+                , 0x01);
     lcd_print(2, str);
 
 
@@ -614,48 +579,39 @@ void show_main_page()
     // текущая температура и уставка "Temp:23.1° Set:23.4°"
     //sprintf(str, "Tmp:%0.1f° Set:%0.1f°", thermo.temp, thermo.tempset);
     
-    sprintf(str, "Tmp:%d.%d° Set:%d.%d°"
+    snprintf(str, 21, "Tmp:%d.%d%c Set:%d.%d%c"
                 , current_temp / 10
                 , current_temp % 10
+                , 0x01
                 , THERMO_SETPOINT(1) / 10
-                ,  THERMO_SETPOINT(1) % 10
+                , THERMO_SETPOINT(1) % 10
+                , 0x01
     );
+
     lcd_print(3, str);
-
-/*
-    typedef enum {
-    MODE_MANUAL,
-    MODE_AUTO,
-    MODE_KOTEL1,
-    MODE_KOTEL2,
-    MODE_MAX
-} mode_e;
-
-mode_e work_mode = MODE_MANUAL;
-*/
 }
 
 void show_menu_page(uint8_t idx)
 {
     char str[20];
-    sprintf(str, "****** Menu %d ******", idx);
+    snprintf(str, 21, "****** Menu %d ******", idx);
     lcd_print(0, str);
 }
 
 void show_menu_thermostat()
 {
-    char str[20];
-    sprintf(str, "**** Thermostat ****");
+    char str[21];
+    snprintf(str, 21, "**** Thermostat ****");
     lcd_print(0, str);
 
-    sprintf(str, "TempSet: %d.%d°", THERMO_SETPOINT(1) / 10,  THERMO_SETPOINT(1) % 10);
+    snprintf(str, 21, "TempSet: %d.%d°", THERMO_SETPOINT(1) / 10,  THERMO_SETPOINT(1) % 10);
     lcd_print(1, str);
 
-    sprintf(str, "");
+    snprintf(str, 21, "                    ");
     lcd_print(2, str);
 
 
-    sprintf(str, "Temp: %.01f°", thermo.temp);
+    snprintf(str, 21, "Temp: %d.%d°        ", current_temp / 10, current_temp % 10);
     lcd_print(3, str);
 
 }
@@ -663,17 +619,16 @@ void show_menu_thermostat()
 void show_menu_hyst()
 {
     char str[20];
-    sprintf(str, "**** Hysteresis ****");
+    snprintf(str, 21, "**** Hysteresis ****");
     lcd_print(0, str);
 
-    float tempset = 23.4f;
-    sprintf(str, "hysteresis: %d.%d°", THERMO_HYSTERESIS(1) / 10,  THERMO_HYSTERESIS(1) % 10);
+    snprintf(str, 21, "hysteresis: %d.%d°", THERMO_HYSTERESIS(1) / 10,  THERMO_HYSTERESIS(1) % 10);
     lcd_print(1, str);
 
-    sprintf(str, "");
+    snprintf(str, 21, "                    ");
     lcd_print(2, str);
 
-    sprintf(str, "Temp: %.01f°", thermo.temp );
+    snprintf(str, 21, "Temp: %d.%d°           ", current_temp / 10, current_temp % 10 );
     lcd_print(3, str);
 
 }
@@ -702,39 +657,37 @@ void show_page(uint8_t idx)
 
 void tempset_dec()
 {
-    //thermo.tempset -= TEMPSET_STEP;
-    //thermo.tempset -= TEMPSET_STEP;
-
     THERMO_TEMP_SET(1, THERMO_SETPOINT(1) - TEMPSET_STEP);
-    if ( THERMO_SETPOINT(1) < TEMPSET_MIN ) THERMO_TEMP_SET(1, TEMPSET_MIN);
-
+    if ( THERMO_SETPOINT(1) < TEMPSET_MIN ) {
+        THERMO_TEMP_SET(1, TEMPSET_MIN);
+    }
     THERMO_TEMP_SET(2, THERMO_SETPOINT(1));
 }
 
 void tempset_inc()
 {
-    //thermo.tempset += TEMPSET_STEP;
-    //if ( thermo.tempset > TEMPSET_MAX ) thermo.tempset = TEMPSET_MAX;
     THERMO_TEMP_SET(1, THERMO_SETPOINT(1) + TEMPSET_STEP);
-    if ( THERMO_SETPOINT(1) > TEMPSET_MIN ) THERMO_TEMP_SET(1, TEMPSET_MAX); 
+    if ( THERMO_SETPOINT(1) > TEMPSET_MIN ) {
+        THERMO_TEMP_SET(1, TEMPSET_MAX);
+    } 
     THERMO_TEMP_SET(2, THERMO_SETPOINT(1));
 }
 
 void hyst_dec()
 {
-    //thermo.hyst -= HYST_STEP;
-    //if ( thermo.hyst < HYST_MIN ) thermo.hyst = HYST_MIN;
     THERMO_HYST_SET(1, THERMO_HYSTERESIS(1) - HYST_STEP);
-    if ( THERMO_HYSTERESIS(1) < HYST_MIN ) THERMO_HYST_SET(1, HYST_MIN);   
+    if ( THERMO_HYSTERESIS(1) < HYST_MIN ) {
+        THERMO_HYST_SET(1, HYST_MIN);
+    }   
     THERMO_HYST_SET(2, THERMO_HYSTERESIS(1));
 }
 
 void hyst_inc()
 {
-    //thermo.hyst += HYST_STEP;
-    //if ( thermo.hyst > HYST_MAX ) thermo.hyst = HYST_MAX;
     THERMO_HYST_SET(1, THERMO_HYSTERESIS(1) + HYST_STEP);
-    if ( THERMO_HYSTERESIS(1) > HYST_MAX ) THERMO_HYST_SET(1, HYST_MAX);  
+    if ( THERMO_HYSTERESIS(1) > HYST_MAX ) {
+        THERMO_HYST_SET(1, HYST_MAX);
+    }
     THERMO_HYST_SET(2, THERMO_HYSTERESIS(1));
 }
 
@@ -751,27 +704,8 @@ uint16_t blink_cfg_total_delay(led_blynk_cfg_t _cfg)
 
 
 void led_blynk_cb(xTimerHandle tmr)
-{
-    
+{  
     led_blynk_cfg_t *_cfg = (led_blynk_cfg_t *)pvTimerGetTimerID(tmr); // rtos
-
-    ESP_LOGI(UTAG, "%s: pin = %d", __func__, _cfg->pin);
-    //ESP_LOGI(UTAG, "%s: cnt = %d", __func__, cfg->cnt);
-
-    ESP_LOGI(UTAG, "%s: data 0:%d->%d, 1:%d->%d, 2:%d->%d, 3:%d->%d, 4:%d->%d"
-                    , __func__
-                    , _cfg->data[0].on
-                    , _cfg->data[0].off
-                    , _cfg->data[1].on
-                    , _cfg->data[1].off                    
-                    , _cfg->data[2].on
-                    , _cfg->data[2].off                    
-                    , _cfg->data[3].on
-                    , _cfg->data[3].off                    
-                    , _cfg->data[4].on
-                    , _cfg->data[4].off
-    );
-
     for ( uint8_t i = 0; i < LED_BLYNK_CFG_DATA_CNT; i++) 
     {       
         if ( _cfg->data[i].on > 0 ) {
@@ -791,35 +725,6 @@ void led_blynk_cb(xTimerHandle tmr)
         xTimerDelete( tmr, 10);
         tmr = NULL;
     }
-}
-
-void led_blynk_error(uint8_t pin)
-{
-    static led_blynk_cfg_t cfg_err;
-    cfg_err.pin = pin;
-    cfg_err.stop = 1;
-
-    ESP_LOGI(UTAG, "%s: pin %d", __func__, cfg_err.pin);
-    memcpy(&cfg_err.data, blynk_data[BLINK_ERROR], sizeof( led_blynk_data_t ));
-
-    // ESP_LOGI(UTAG, "%s: data 0:%d->%d, 1:%d->%d, 2:%d->%d, 3:%d->%d, 4:%d->%d"
-    //                 , __func__
-    //                 , cfg_err->data[0].on
-    //                 , cfg_err->data[0].off
-    //                 , cfg_err->data[1].on
-    //                 , cfg_err->data[1].off                    
-    //                 , cfg_err->data[2].on
-    //                 , cfg_err->data[2].off                    
-    //                 , cfg_err->data[3].on
-    //                 , cfg_err->data[3].off                    
-    //                 , cfg_err->data[4].on
-    //                 , cfg_err->data[4].off
-    // );
-
-    uint16_t delay = 0;
-    delay = blink_cfg_total_delay(cfg_err);
-    blynk_error_timer = xTimerCreate("blnkerrtmr", 10 / portTICK_PERIOD_MS, pdFALSE, &cfg_err, led_blynk_cb);
-    xTimerStart( blynk_error_timer, 0);
 }
 
 // мигает циклично несколько раз в секунду в зависимости от выбранного режима работы
@@ -842,60 +747,28 @@ void led_work_mode_blynk(uint8_t pin)
 
     memcpy(&cfg.data, blynk_data[idx], sizeof( led_blynk_data_t ));
 
-    ESP_LOGI(UTAG, "%s: data 0:%d->%d, 1:%d->%d, 2:%d->%d, 3:%d->%d, 4:%d->%d"
-                    , __func__
-                    , cfg.data[0].on
-                    , cfg.data[0].off
-                    , cfg.data[1].on
-                    , cfg.data[1].off                    
-                    , cfg.data[2].on
-                    , cfg.data[2].off                    
-                    , cfg.data[3].on
-                    , cfg.data[3].off                    
-                    , cfg.data[4].on
-                    , cfg.data[4].off
-    );
-
     uint16_t delay = 0;
     delay = blink_cfg_total_delay(cfg);
 
     // задать шаблон мигания и передать его параметром в таймер
     if ( blynk_timer == NULL )
     {
-        //ESP_LOGI(UTAG, "%s: try to create timer, delay %d", __func__, delay);
         blynk_timer = xTimerCreate("blnktmr", delay / portTICK_PERIOD_MS, pdTRUE, &cfg, led_blynk_cb);
-        //ESP_LOGI(UTAG, "%s: timer created", __func__);
     }
 
     if ( xTimerIsTimerActive( blynk_timer ) == pdTRUE )
     {
-        //ESP_LOGI(UTAG, "%s: try to stop timer", __func__);
         xTimerStop( blynk_timer, 0);
-        //ESP_LOGI(UTAG, "%s: timer stoped", __func__);
     }    
 
-    //ESP_LOGI(UTAG, "%s: try to start timer", __func__);
     xTimerStart( blynk_timer, 0);   
-    //ESP_LOGI(UTAG, "%s: timer started", __func__);  
-}
-
-// мигает при ошибке одним циклом 5 раз в секунду
-void led_error_blynk(uint8_t pin)
-{
-
-}
-
-// мигает при успешном действии одним циклом 2 раза в секунду
-void led_accept_blynk(uint8_t pin)
-{
-
 }
 
 void backlight_timer_cb(xTimerHandle tmr)   // rtos
 {
     uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
-    //ESP_LOGI(UTAG, "%s: backlight pin = %d", __func__, pin);
     GPIO_ALL(pin, 0);
+    xTimerStop(tmr, 10);
     xTimerDelete(tmr, 10);
     backlight_timer = NULL;
 }
@@ -904,7 +777,7 @@ void turn_on_lcd_backlight(uint8_t pin, uint8_t *state)
 {
     
     vTaskDelay( 300 / portTICK_PERIOD_MS );
-    //ESP_LOGI(UTAG, "%s: backlight pin = %d", __func__, pin);
+
     // каждое нажатие кнопки включает подсветку дисплея
     GPIO_ALL(pin, 1);
 
@@ -926,9 +799,8 @@ void turn_on_lcd_backlight(uint8_t pin, uint8_t *state)
 void button1_short_press(void *args, uint8_t *state)
 {
     uint8_t backlight = LCD_BACKLIGHT_STATE;
-    ESP_LOGI(UTAG, "%s: Backlight = %d", __func__, backlight);
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
-    if ( backlight == 0) return;
+    if ( backlight == 0 && sensors_param.lcden > 0) return;
     // короткое нажатие кнопки 1
     // если на главной странице, то переключаем режим
     if ( menu_idx == MENU_PAGE_MAIN ) {
@@ -937,31 +809,28 @@ void button1_short_press(void *args, uint8_t *state)
         // если в меню, переключаем страницы меню
         switch_menu();
     }
-    last_key_press = millis();
+    last_key_press = millis();  
 }
 
 void button1_long_press(void *args, uint8_t *state)
 {
     uint8_t backlight = LCD_BACKLIGHT_STATE;   
-    ESP_LOGI(UTAG, "%s: Backlight = %d", __func__, backlight);
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
-    if ( backlight == 0) return;
+    if ( backlight == 0 && sensors_param.lcden > 0) return;
     // если на главной странице, то входим в меню
     if ( menu_idx == MENU_PAGE_MAIN ) {
-        ESP_LOGI(UTAG, "%s: enter to menu", __func__);
         menu_idx = MENU_PAGE_TEMPSET;
     } else {
         // если в меню, то выходим на главную страницу
-        ESP_LOGI(UTAG, "%s: exit from menu", __func__);
         menu_idx = MENU_PAGE_MAIN;
     }
+
     last_key_press = millis();
 }
 
 void button2_short_press(uint8_t pin, uint8_t *state)
 {  
     uint8_t backlight = LCD_BACKLIGHT_STATE;
-    ESP_LOGI(UTAG, "%s: Backlight = %d", __func__, backlight);
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     if ( menu_idx == MENU_PAGE_MAIN ) 
     {
@@ -973,7 +842,7 @@ void button2_short_press(uint8_t pin, uint8_t *state)
         // если на главной странице, то управляем термостатом 1
         GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     } else {
-        if ( backlight == 0) return;
+        if ( backlight == 0 && sensors_param.lcden > 0) return;
         if ( menu_idx == MENU_PAGE_TEMPSET ) 
         {
             tempset_dec();
@@ -989,7 +858,6 @@ void button2_short_press(uint8_t pin, uint8_t *state)
 void button3_short_press(uint8_t pin, uint8_t *state)
 {
     uint8_t backlight = LCD_BACKLIGHT_STATE;
-    ESP_LOGI(UTAG, "%s: Backlight = %d", __func__, backlight);
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     if ( menu_idx == MENU_PAGE_MAIN ) 
     {
@@ -1001,7 +869,7 @@ void button3_short_press(uint8_t pin, uint8_t *state)
         // если на главной странице, то управляем термостатом 1
         GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     } else {
-        if ( backlight == 0) return;
+        if ( backlight == 0 && sensors_param.lcden > 0) return;
         if ( menu_idx == MENU_PAGE_TEMPSET ) 
         {
             tempset_inc();
@@ -1021,9 +889,7 @@ void button4_short_press(uint8_t pin, uint8_t *state)
     ESP_LOGI(UTAG, "%s: setpoint = %d", __func__, THERMO_SETPOINT(1) );
     ESP_LOGI(UTAG, "%s: hysteresis = %d", __func__, THERMO_HYSTERESIS(1) );
     ESP_LOGI(UTAG, "%s: Backlight = %d", __func__, LCD_BACKLIGHT_STATE);
-    last_key_press = millis();
-
-    led_blynk_error(215);
+    last_key_press = millis(); 
 }
 
 void startfunc(){
@@ -1041,6 +907,7 @@ void startfunc(){
     if ( PUMP2_GPIO == 0 || PUMP2_GPIO >= 255 ) { PUMP2_GPIO = PUMP2_GPIO_DEFAULT ; err = 1; }
     if ( ESC_GPIO == 0 || ESC_GPIO >= 255 ) { ESC_GPIO = ESC_GPIO_DEFAULT ; err = 1; }
     if ( VENT_GPIO == 0 || VENT_GPIO >= 255 ) { VENT_GPIO = VENT_GPIO_DEFAULT ; err = 1; }
+    if ( LED_WORK_MODE_GPIO == 0 || LED_WORK_MODE_GPIO >= 255 ) { LED_WORK_MODE_GPIO = LED_WORK_MODE_GPIO_DEFAULT ; err = 1; }
 
     if ( NIGHT_TIME >= 23 ) { NIGHT_TIME = NIGHT_TIME_DEFAULT ; err = 1; }
     if ( DAY_TIME >= 23 ) { DAY_TIME = DAY_TIME_DEFAULT ; err = 1; }
@@ -1094,16 +961,12 @@ void startfunc(){
     mcp23017_queue = xQueueCreate(5, sizeof(uint16_t) * 2);
     xTaskCreate( mcp23017_isr_cb, "mcp23017_isr", 1024, NULL, 10, &mcp23017_task);
 
-    thermo.temp = 23.4f;
-    thermo.tempset = 23.4f;
-    thermo.hyst = 0.3f;
-
     set_active_kotel( work_mode );
 
     // выключить подсветку черех Х сек
-    turn_on_lcd_backlight(199, NULL);
+    turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
 
-    led_work_mode_blynk(214);
+    //led_work_mode_blynk( LED_WORK_MODE_GPIO );
 }
 
 void timerfunc(uint32_t  timersrc) {
@@ -1143,6 +1006,7 @@ void timerfunc(uint32_t  timersrc) {
 }
 
 void webfunc(char *pbuf) {
+    os_sprintf(HTTPBUFF,"<br>Display enabled = %s (%d)", sensors_param.lcden > 0 ? "Yes" : "No", sensors_param.lcden ); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>Current temp = %d.%d", current_temp / 10, current_temp % 10); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>Work mode = %d", work_mode); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>Active kotel = %d", active_kotel); // вывод данных на главной модуля
