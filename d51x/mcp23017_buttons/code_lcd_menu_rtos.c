@@ -202,44 +202,6 @@ uint32_t last_key_press = 0;
 #define MENU_EXIT_TIMEOUT 10000 // 10 sec
 
 
-// структура для определения правил мигания
-typedef struct {
-    // в виде динамического массива сделать
-    uint16_t on;   // длительность вспышки
-    uint16_t off;  // длительность после вспышки
-} led_blynk_ms_t;
-
-#define LED_BLYNK_CFG_DATA_CNT 5
-
-typedef led_blynk_ms_t led_blynk_data_t[LED_BLYNK_CFG_DATA_CNT];
-
-typedef enum {
-    BLINK_NONE,
-    BLINK_ALWAYS_ON,
-    BLINK_BREATH1,
-    BLINK_BREATH2,
-    BLINK_MAX
-} blynk_type_e;
-
-// общая длительность цикла мигания - сумма всех значений
-const led_blynk_data_t blynk_data[BLINK_MAX] = {
-    { {0, 1000},    {0, 0},     {0, 0},     {0, 0},     {0, 0}},    // постоянно выключено
-    { {1000, 0},    {0, 0},     {0, 0},     {0, 0},     {0, 0}},    // постоянно включено
-    { {50, 100},    {0, 1850},  {0, 0},     {0, 0},     {0, 0}},    // 1 вспышка в 2 сек
-    { {50, 100},    {50, 100},  {0, 1700},  {0, 0},     {0, 0}}    // 2 вспышки в 2 сек
-};
-
-typedef struct {
-    uint8_t pin;
-    led_blynk_data_t data;
-    uint8_t stop;
-} led_blynk_cfg_t;
-
-static led_blynk_cfg_t cfg;
-
-TimerHandle_t blynk_timer = NULL;
-
-
 esp_err_t nvs_param_save(const char* space_name, const char* key, void *param, uint16_t len)
 {
     esp_err_t ret = ESP_ERR_INVALID_ARG;
@@ -513,7 +475,6 @@ void change_work_mode()
     ESP_LOGI(UTAG, "%s: work mode = %d", __func__, work_mode);
     nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode));
     set_active_kotel( work_mode );
-    //led_work_mode_blynk( LED_WORK_MODE_GPIO );
 }
 
 void switch_menu()
@@ -593,7 +554,7 @@ void show_main_page()
     // текущая температура и уставка "Temp:23.1° Set:23.4°"
     //sprintf(str, "Tmp:%0.1f° Set:%0.1f°", thermo.temp, thermo.tempset);
     
-    snprintf(str, 21, "Tmp:%d.%d%c Set:%d.%d%c"
+    snprintf(str, 21, "Tmp:%d.%d%c  Set:%d.%d%c"
                 , current_temp / 10
                 , current_temp % 10
                 , 0x01
@@ -705,79 +666,6 @@ void hyst_inc()
     THERMO_HYST_SET(2, THERMO_HYSTERESIS(1));
 }
 
-uint16_t blink_cfg_total_delay(led_blynk_cfg_t _cfg) 
-{ 
-    uint16_t delay = 0;
-    for ( uint8_t i = 0; i < LED_BLYNK_CFG_DATA_CNT; i++)
-    { 
-        delay += _cfg.data[i].on;
-        delay += _cfg.data[i].off;
-    }
-    return delay;
-}
-
-
-void led_blynk_cb(xTimerHandle tmr)
-{  
-    led_blynk_cfg_t *_cfg = (led_blynk_cfg_t *)pvTimerGetTimerID(tmr); // rtos
-    for ( uint8_t i = 0; i < LED_BLYNK_CFG_DATA_CNT; i++) 
-    {       
-        if ( _cfg->data[i].on > 0 ) {
-            GPIO_ALL( _cfg->pin, 1);
-            vTaskDelay( _cfg->data[i].on / portTICK_PERIOD_MS);
-        }
-
-        if ( _cfg->data[i].off > 0 ) {
-            GPIO_ALL( _cfg->pin, 0);
-            vTaskDelay( _cfg->data[i].off / portTICK_PERIOD_MS);
-        }
-    }
-
-    // restart blynk timer
-    if ( _cfg->stop == 1) {
-        xTimerStop( tmr, 10);
-        xTimerDelete( tmr, 10);
-        tmr = NULL;
-    }
-}
-
-// мигает циклично несколько раз в секунду в зависимости от выбранного режима работы
-void led_work_mode_blynk(uint8_t pin)
-{
-    if ( blynk_timer != NULL ) {
-        xTimerDelete(blynk_timer, 10);
-        blynk_timer = NULL;
-    }
-
-    cfg.pin = pin;
-    cfg.stop = 0;
-
-    uint8_t idx = 0;
-    if ( work_mode == MODE_MANUAL ) idx = BLINK_NONE;
-    else if ( work_mode == MODE_AUTO ) idx = BLINK_ALWAYS_ON;
-    else if ( work_mode == MODE_KOTEL1 ) idx = BLINK_BREATH1;
-    else if ( work_mode == MODE_KOTEL2 ) idx = BLINK_BREATH2;
-    else idx = 0;
-
-    memcpy(&cfg.data, blynk_data[idx], sizeof( led_blynk_data_t ));
-
-    uint16_t delay = 0;
-    delay = blink_cfg_total_delay(cfg);
-
-    // задать шаблон мигания и передать его параметром в таймер
-    if ( blynk_timer == NULL )
-    {
-        blynk_timer = xTimerCreate("blnktmr", delay / portTICK_PERIOD_MS, pdTRUE, &cfg, led_blynk_cb);
-    }
-
-    if ( xTimerIsTimerActive( blynk_timer ) == pdTRUE )
-    {
-        xTimerStop( blynk_timer, 0);
-    }    
-
-    xTimerStart( blynk_timer, 0);   
-}
-
 void backlight_timer_cb(xTimerHandle tmr)   // rtos
 {
     uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
@@ -790,9 +678,7 @@ void backlight_timer_cb(xTimerHandle tmr)   // rtos
 void turn_on_lcd_backlight(uint8_t pin, uint8_t *state)
 {
     
-    vTaskDelay( 300 / portTICK_PERIOD_MS );
-
-    // каждое нажатие кнопки включает подсветку дисплея
+   // каждое нажатие кнопки включает подсветку дисплея
     GPIO_ALL(pin, 1);
 
     // и запускает таймер на отключение подсветки дисплея на Х секунд, передается в аргументе
@@ -979,8 +865,6 @@ void startfunc(){
 
     // выключить подсветку черех Х сек
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
-
-    //led_work_mode_blynk( LED_WORK_MODE_GPIO );
 }
 
 void timerfunc(uint32_t  timersrc) {
