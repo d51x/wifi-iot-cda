@@ -1,5 +1,5 @@
 static const char* UTAG = "MCP23017";
-#define FW_VER "0.71"
+#define FW_VER "0.72"
 
 
 /*
@@ -54,7 +54,12 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define BIT_CHECK(reg, bit_no)   ( (reg) & B(bit_no) )
 #define BIT_TRIGGER(reg, bit_no)   (reg) ^= B(bit_no)
 
-#define LCD_BACKLIGHT_STATE BIT_CHECK(sensors_param.lcdled,0)
+
+#if lcde
+    #define LCD_BACKLIGHT_STATE BIT_CHECK(sensors_param.lcdled,0)
+#else
+    #define LCD_BACKLIGHT_STATE 1
+#endif
 
 #define THERMO_STATE(x)		BIT_CHECK(sensors_param.thermo[x-1][0],0)
 #define THERMO_ON(x)  { if ( GPIO_ALL_GET(x+99) == 0 ) GPIO_ALL(99+x,1);}
@@ -387,15 +392,24 @@ void mcp23017_pir_sensor_cb(uint8_t pin, uint8_t *state)
     GPIO_ALL(pin, *state);
 }
 
+
+void lcd_print_(uint8_t line, const char *str)
+{
+    #if lcde
+        LCD_print(line, str);
+    #endif
+}
+
+
 void lcd_print(uint8_t line, const char *str)
 {
     // если sens_state вздедена датчиками, то дисплей не выводит )))
     if ( display_error == 1 ) return;
 
     ///uint8_t len = strlen(str);
-    ///ESP_LOGI( UTAG, ">>>>> %d: %s", len, str);
+    ///ESP_LOGI( UTAG, ">>>>> %d: %s", len, str);   
 
-    LCD_print(line, str);
+    lcd_print_(line, str);
 }
 
 void show_display_error_cb(xTimerHandle tmr)   // rtos
@@ -409,30 +423,30 @@ void show_display_error_cb(xTimerHandle tmr)   // rtos
 
 void print_error(const char *str)
 {
-    LCD_print(0, "   *** ERROR ***    ");
+    lcd_print_(0, "   *** ERROR ***    ");
     char err[20];
     if ( strlen(str) > 20 )
     {
         strncpy(err, str, 20);
-        LCD_print(1, err);  
+        lcd_print_(1, err);  
         str += 20;
         
         if ( strlen(str) > 20 ) 
         {
             strncpy(err, str, 20);
-            LCD_print(2, err); 
+            lcd_print_(2, err); 
             str += 20;
-            LCD_print(3, str);
+            lcd_print_(3, str);
         } else {
-            LCD_print(2, str);
-            LCD_print(3, "                    "); 
+            lcd_print_(2, str);
+            lcd_print_(3, "                    "); 
         }  
 
         
     } else {
-        LCD_print(1, "                    "); 
-        LCD_print(2, str); 
-        LCD_print(3, "                    "); 
+        lcd_print_(1, "                    "); 
+        lcd_print_(2, str); 
+        lcd_print_(3, "                    "); 
     }
     
 }
