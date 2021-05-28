@@ -1,15 +1,14 @@
 static const char* UTAG = "MCP23017";
-#define FW_VER "0.72"
+#define FW_VER "0.73"
 
 
 /*
 Количество настроек
-Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), WorkMode GPIO, LedErrorGpio, LedOkGpio
+Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay
 (Доступные значения: 0-20 or (string1, string2, string3, ...))
 
 */
 
-#define BACKLIGHT_TIMEOUT   5 * 1000  // 5 sec
 #define TEMPSET_STEP 1
 #define HYST_STEP 1
 #define TEMPSET_MIN 100
@@ -27,7 +26,7 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define NIGHT_TIME  sensors_param.cfgdes[6] //23
 #define DAY_TIME    sensors_param.cfgdes[7] //7
 
-#define LED_WORK_MODE_GPIO    sensors_param.cfgdes[8] //214
+#define BACKLIGHT_TIMEOUT    sensors_param.cfgdes[8] // 30
 
 #define flow_temp data1wire[0]
 #define return_temp data1wire[1]
@@ -39,8 +38,7 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define ESC_GPIO_DEFAULT 212
 #define VENT_GPIO_DEFAULT 213
 
-#define LED_WORK_MODE_GPIO_DEFAULT 214
-
+#define BACKLIGHT_TIMEOUT_DEFAULT 30 //sec
 #define NIGHT_TIME_DEFAULT 23
 #define DAY_TIME_DEFAULT 7
 
@@ -685,7 +683,7 @@ void turn_on_lcd_backlight(uint8_t pin, uint8_t *state)
     // BACKLIGHT_TIMEOUT
     if ( backlight_timer == NULL )
     {
-        backlight_timer = xTimerCreate("bcklght", BACKLIGHT_TIMEOUT / portTICK_PERIOD_MS, pdFALSE, pin, backlight_timer_cb);
+        backlight_timer = xTimerCreate("bcklght", BACKLIGHT_TIMEOUT * 1000 / portTICK_PERIOD_MS, pdFALSE, pin, backlight_timer_cb);
     }
 
     if ( xTimerIsTimerActive( backlight_timer ) == pdTRUE )
@@ -807,7 +805,6 @@ void startfunc(){
     if ( PUMP2_GPIO == 0 || PUMP2_GPIO >= 255 ) { PUMP2_GPIO = PUMP2_GPIO_DEFAULT ; err = 1; }
     if ( ESC_GPIO == 0 || ESC_GPIO >= 255 ) { ESC_GPIO = ESC_GPIO_DEFAULT ; err = 1; }
     if ( VENT_GPIO == 0 || VENT_GPIO >= 255 ) { VENT_GPIO = VENT_GPIO_DEFAULT ; err = 1; }
-    if ( LED_WORK_MODE_GPIO == 0 || LED_WORK_MODE_GPIO >= 255 ) { LED_WORK_MODE_GPIO = LED_WORK_MODE_GPIO_DEFAULT ; err = 1; }
 
     if ( NIGHT_TIME >= 23 ) { NIGHT_TIME = NIGHT_TIME_DEFAULT ; err = 1; }
     if ( DAY_TIME >= 23 ) { DAY_TIME = DAY_TIME_DEFAULT ; err = 1; }
