@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "1.03"
+#define FW_VER "1.06"
 
 
 /*
@@ -37,7 +37,13 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define TEMPSET sensors_param.cfgdes[15]
 
+#define current_temp        valdes[0]  // устанавливать через интерпретер или mqtt - valdes[0]
+#define street_temp         valdes[1]  // устанавливать через интерпретер или mqtt - valdes[0]
+#define work_mode           valdes[2]
+#define schedule            valdes[3]
 
+#define VALDES_INDEX_WORK_MODE                  2   //  
+#define VALDES_INDEX_SCHEDULE                  3   //  
 
 #define flow_temp data1wire[0]
 #define return_temp data1wire[1]
@@ -80,9 +86,6 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define THERMO_TEMP_SET(x,y)  { sensors_param.thermzn[x-1][0] = y; SAVEOPT; }
 #define THERMO_HYST_SET(x,y)  { sensors_param.thermzn[x-1][1] = y; SAVEOPT; }
-
-#define current_temp valdes[0]  // устанавливать через интерпретер или mqtt - valdes[0]
-#define street_temp  valdes[1]  // устанавливать через интерпретер или mqtt - valdes[0]
 
 #define SYMBOL_DEGREE 0x01
 #define SYMBOL_ARROW_RIGHT 126
@@ -194,7 +197,7 @@ typedef enum {
     MODE_MAX
 } mode_e;
 
-mode_e work_mode = MODE_MANUAL;
+//mode_e work_mode = MODE_MANUAL; // TODO: переделать на valdes[2]
 
 typedef enum {
     KOTEL_NONE,
@@ -204,7 +207,8 @@ typedef enum {
 
 active_kotel_e active_kotel = KOTEL_NONE;
 
-uint16_t schedule = 0;
+//uint16_t schedule = 0;      // TODO: переделать на valdes[3]
+
 //uint16_t tempset = 240;
 uint16_t shed_tempset = 0;
 
@@ -1027,7 +1031,55 @@ void timerfunc(uint32_t  timersrc) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 
-void webfunc(char *pbuf) {
+void webfunc(char *pbuf) 
+{
+
+
+   //********************************************************************************************
+    os_sprintf(HTTPBUFF,"<br><div class='fll c2'>");
+    os_sprintf(HTTPBUFF,"<div class='fll'>Mode: </div>"); 
+ 
+
+    #define html_button_mode "<a href='#' onclick='wm(%d)'><div class='g_%d k kk fll wm' id='v%d'>%s</div></a>"
+
+    os_sprintf(HTTPBUFF, html_button_mode, MODE_MANUAL, work_mode == MODE_MANUAL,   MODE_MANUAL, "Manual");
+    os_sprintf(HTTPBUFF, html_button_mode, MODE_AUTO,   work_mode == MODE_AUTO,     MODE_AUTO, "Auto");
+    os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL1, work_mode == MODE_KOTEL1,   MODE_KOTEL1, "Kotel1");
+    os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL2, work_mode == MODE_KOTEL2,   MODE_KOTEL2, "Kotel2");
+
+
+    // uint8_t gpio_st = GPIO_ALL_GET(ESC_GPIO);
+    // os_sprintf(HTTPBUFF,"<a href='?gpio=%d'><div class='g_%d k kk fll'>%s</div></a>", ESC_GPIO, gpio_st, "ESC");
+        // SCRIPT
+    os_sprintf(HTTPBUFF, "<script type='text/javascript'>"
+
+
+                        "window.onload=function()"
+                        "{"
+                            "let e=document.createElement('style');"
+                            "e.innerText='"
+                                                ".kk{border-radius:4px;margin:-2px 2px 8px 4px;width:60px;}"
+                                                "';"
+                            "document.head.appendChild(e)"
+                        "};"
+
+                        "function wm(t)"
+                        "{"
+                            "ajax_request('/valdes?int=%d'+'&set='+t,"
+                                "function(res)"
+                                "{"
+                                    "let v=document.getElementsByClassName('wm');"
+                                    "for(let i=0;i<v.length;i++)v[i].classList.replace('g_1','g_0');"
+                                    "document.getElementById('v'+t).classList.add('g_1')"
+                                "}"
+                            ")"
+                        "};"
+
+                        "</script>"
+                    , VALDES_INDEX_WORK_MODE 
+    );  
+    os_sprintf(HTTPBUFF,"</div>");
+
     os_sprintf(HTTPBUFF,"<br>Current temp = %d.%d", current_temp / 10, current_temp % 10); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>GlobalTempSet = %d.%d", TEMPSET / 10, TEMPSET % 10); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>shed_tempset = %d.%d", shed_tempset / 10, shed_tempset % 10); // вывод данных на главной модуля
@@ -1035,4 +1087,6 @@ void webfunc(char *pbuf) {
     os_sprintf(HTTPBUFF,"<br>Work mode = %d", work_mode); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>Active kotel = %d", active_kotel); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>ver.%s", FW_VER); // вывод данных на главной модуля
+
+  
 }
