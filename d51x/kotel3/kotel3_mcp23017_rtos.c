@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "1.06"
+#define FW_VER "1.09"
 
 
 /*
@@ -1038,19 +1038,24 @@ void webfunc(char *pbuf)
    //********************************************************************************************
     os_sprintf(HTTPBUFF,"<br><div class='fll c2'>");
     os_sprintf(HTTPBUFF,"<div class='fll'>Mode: </div>"); 
- 
-
     #define html_button_mode "<a href='#' onclick='wm(%d)'><div class='g_%d k kk fll wm' id='v%d'>%s</div></a>"
-
     os_sprintf(HTTPBUFF, html_button_mode, MODE_MANUAL, work_mode == MODE_MANUAL,   MODE_MANUAL, "Manual");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_AUTO,   work_mode == MODE_AUTO,     MODE_AUTO, "Auto");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL1, work_mode == MODE_KOTEL1,   MODE_KOTEL1, "Kotel1");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL2, work_mode == MODE_KOTEL2,   MODE_KOTEL2, "Kotel2");
+    os_sprintf(HTTPBUFF,"</div>");
 
+    os_sprintf(HTTPBUFF,"<br><div class='fll c2'>");
+    os_sprintf(HTTPBUFF,"<div class='fll'>Schedule: </div>"); 
+    os_sprintf(HTTPBUFF, "<a id='ushd' href='#' data-val='%d' onclick='schd(this.dataset.val)'><div class='g_%d k kk fll' id='sch' data-text='%s'>%s</div></a><br>"
+                        , !schedule
+                        , schedule
+                        , schedule ? "Off" : "On" //обратное значение, подставится после нажатия
+                        , schedule ? "On" : "Off"
+                        );   
 
-    // uint8_t gpio_st = GPIO_ALL_GET(ESC_GPIO);
-    // os_sprintf(HTTPBUFF,"<a href='?gpio=%d'><div class='g_%d k kk fll'>%s</div></a>", ESC_GPIO, gpio_st, "ESC");
-        // SCRIPT
+    os_sprintf(HTTPBUFF,"</div>");
+    // SCRIPT
     os_sprintf(HTTPBUFF, "<script type='text/javascript'>"
 
 
@@ -1075,18 +1080,35 @@ void webfunc(char *pbuf)
                             ")"
                         "};"
 
-                        "</script>"
-                    , VALDES_INDEX_WORK_MODE 
-    );  
-    os_sprintf(HTTPBUFF,"</div>");
+                        "function schd(t)"
+                        "{"
+                            "ajax_request("
+                                "'/valdes?int=%d'+'&set='+t,"
+                                "function(res)"
+                                    "{"
+                                        "var n=1-parseInt(t);"
+                                        "var sc=document.getElementById('sch');"
+                                        "sc.classList.replace('g_'+n,'g_'+t);"
+                                        "sc.innerHTML=sc.getAttribute('data-text');"
+                                        "document.getElementById('ushd').setAttribute('data-val',n);"
+                                    "}"
+                            ")"
+                        "}"
 
-    os_sprintf(HTTPBUFF,"<br>Current temp = %d.%d", current_temp / 10, current_temp % 10); // вывод данных на главной модуля
-    os_sprintf(HTTPBUFF,"<br>GlobalTempSet = %d.%d", TEMPSET / 10, TEMPSET % 10); // вывод данных на главной модуля
-    os_sprintf(HTTPBUFF,"<br>shed_tempset = %d.%d", shed_tempset / 10, shed_tempset % 10); // вывод данных на главной модуля
-    os_sprintf(HTTPBUFF,"<br>Schedule = %d", schedule); // вывод данных на главной модуля
-    os_sprintf(HTTPBUFF,"<br>Work mode = %d", work_mode); // вывод данных на главной модуля
-    os_sprintf(HTTPBUFF,"<br>Active kotel = %d", active_kotel); // вывод данных на главной модуля
-    os_sprintf(HTTPBUFF,"<br>ver.%s", FW_VER); // вывод данных на главной модуля
+                        "</script>"
+                    , VALDES_INDEX_WORK_MODE
+                    , VALDES_INDEX_SCHEDULE 
+    );  
+ 
+
+    os_sprintf(HTTPBUFF,"<br>Temperature: %d.%d °C", current_temp / 10, current_temp % 10); 
+    if ( schedule ) {
+        os_sprintf(HTTPBUFF,"<br>Schedule tempset: %d.%d °C", shed_tempset / 10, shed_tempset % 10);     
+    } else {
+        os_sprintf(HTTPBUFF,"<br>Global tempset: %d.%d °C", TEMPSET / 10, TEMPSET % 10);     
+    }
+
+    os_sprintf(HTTPBUFF,"<br>ver.%s", FW_VER); 
 
   
 }
