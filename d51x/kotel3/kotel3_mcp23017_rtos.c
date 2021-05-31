@@ -1,10 +1,10 @@
 static const char* UTAG = "USR";
-#define FW_VER "0.99"
+#define FW_VER "1.02"
 
 
 /*
 Количество настроек
-Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay, Kotel1LED, Kotel2LED, KotelWorkLed, PumpWorkLed, ScheduleLed, VentLed
+Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay, Kotel1LED, Kotel2LED, KotelWorkLed, PumpWorkLed, ScheduleLed, VentLed, GlobalTempSet
 
 */
 
@@ -34,6 +34,8 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define PUMP_LED_GPIO sensors_param.cfgdes[12]
 #define SCHEDULE_LED_GPIO sensors_param.cfgdes[13]
 #define VENT_LED_GPIO sensors_param.cfgdes[14]
+
+#define TEMPSET sensors_param.cfgdes[15]
 
 
 
@@ -202,11 +204,14 @@ typedef enum {
 active_kotel_e active_kotel = KOTEL_NONE;
 
 uint16_t schedule = 0;
+//uint16_t tempset = 240;
+uint16_t shed_tempset = 0;
 
 #define WORKMODE    work_mode
 #define ADDLISTSENS {200,LSENSFL0,"WorkMode","workmode",&WORKMODE,NULL}, \
                     {201,LSENSFL1,"Temperature","temp",&current_temp,NULL}, \
-                    {202,LSENSFL0,"Schedule","schedule",&schedule,NULL},
+                    {202,LSENSFL0,"Schedule","schedule",&schedule,NULL}, \
+                    {203,LSENSFL0,"TempSet","tempset",&TEMPSET,NULL},
 
 
 uint8_t display_error = 0;
@@ -382,19 +387,11 @@ void lcd_print(uint8_t line, const char *str)
 {
     // если sens_state вздедена датчиками, то дисплей не выводит )))
     if ( display_error == 1 ) return;
-
-    ///uint8_t len = strlen(str);
-    ///ESP_LOGI( UTAG, ">>>>> %d: %s", len, str);   
-
     lcd_print_(line, str);
 }
 
 void show_display_error_cb(xTimerHandle tmr)   // rtos
 {
-   ESP_LOGI(UTAG, "%s: show_error_timer = %p", __func__, show_error_timer);
-   ESP_LOGI(UTAG, "%s: tmr = %p", __func__, tmr);
-   ESP_LOGI(UTAG, "%s: pvTimerGetTimerID = %d", __func__, pvTimerGetTimerID(tmr)); // rtos);
-   ESP_LOGI(UTAG, "%s: pvTimerGetTimerID = %d", __func__, pvTimerGetTimerID(tmr)); // rtos);
     display_error = 0;
     xTimerStop( show_error_timer, 0);
     xTimerDelete(show_error_timer, 10);
@@ -403,7 +400,6 @@ void show_display_error_cb(xTimerHandle tmr)   // rtos
 
 void print_error(const char *str)
 {
-    ESP_LOGI(UTAG, "%s: %s", __func__, str );
     lcd_print_(0, "   *** ERROR ***    ");
     char err[21];
     if ( strlen(str) > 20 )
@@ -434,25 +430,18 @@ void print_error(const char *str)
 
 void show_display_error(const char *str)
 {
-    //ESP_LOGI(UTAG, "%s: display error = %s", __func__, str);
     display_error = 1;
-
-    ESP_LOGI(UTAG, "%s: show_error_timer is %s", __func__, show_error_timer == NULL ? "NULL" : "NOT NULL" );
 
     if ( show_error_timer == NULL )
     {
         show_error_timer = xTimerCreate("dsplerr", SHOW_ERROR_TIMEOUT / portTICK_PERIOD_MS, pdFALSE, NULL, show_display_error_cb);
     }
 
-    ESP_LOGI(UTAG, "%s: show_error_timer is %s", __func__, xTimerIsTimerActive( show_error_timer ) == pdTRUE ? "ACTIVE" : "NOT ACTIVE" );
-
     if ( xTimerIsTimerActive( show_error_timer ) == pdTRUE )
     {
-        ESP_LOGI(UTAG, "%s: show_error_timer stop timer", __func__);
         xTimerStop( show_error_timer, 0);
     }    
 
-    ESP_LOGI(UTAG, "%s: show_error_timer start timer", __func__);
     xTimerStart( show_error_timer, 0);   
 
     // show error
@@ -497,7 +486,6 @@ void change_work_mode()
     if ( display_error == 1 ) return;
     work_mode++;
     if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
-    ESP_LOGI(UTAG, "%s: work mode = %d", __func__, work_mode);
     nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode));
     set_active_kotel( work_mode );
 }
@@ -668,13 +656,6 @@ void show_main_page()
     ii++;
 }
 
-void show_menu_page(uint8_t idx)
-{
-    char str[20];
-    snprintf(str, 21, "****** Menu %d ******", idx);
-    lcd_print(0, str);
-}
-
 void show_page(uint8_t idx)
 {
     switch ( idx ) 
@@ -700,34 +681,42 @@ void show_page(uint8_t idx)
 
 void tempset_dec()
 {
-    uint16_t setpoint = THERMO_SETPOINT(1);
-    ESP_LOGI(UTAG, "%s: set point = %d", __func__, setpoint );
-    setpoint -= TEMPSET_STEP;
+    //uint16_t setpoint = THERMO_SETPOINT(1);
+    TEMPSET -= TEMPSET_STEP;
 
-    if ( setpoint < TEMPSET_MIN ) {
-        setpoint = TEMPSET_MIN;
+    if ( TEMPSET < TEMPSET_MIN ) {
+        TEMPSET = TEMPSET_MIN;
     } 
 
-    ESP_LOGI(UTAG, "%s: new set point = %d", __func__, setpoint );
-    
-    THERMO_TEMP_SET(1, setpoint);
-    THERMO_TEMP_SET(2, setpoint);
+    THERMO_TEMP_SET(1, TEMPSET);
+    THERMO_TEMP_SET(2, TEMPSET);
 }
 
 void tempset_inc()
 {
-    uint16_t setpoint = THERMO_SETPOINT(1);
-    ESP_LOGI(UTAG, "%s: set point = %d", __func__, setpoint );
-    setpoint += TEMPSET_STEP;
+    //uint16_t setpoint = THERMO_SETPOINT(1);
+    TEMPSET += TEMPSET_STEP;
 
-    if ( setpoint > TEMPSET_MAX ) {
-        setpoint = TEMPSET_MAX;
+    if ( TEMPSET > TEMPSET_MAX ) {
+        TEMPSET = TEMPSET_MAX;
     } 
 
-    ESP_LOGI(UTAG, "%s: new set point = %d", __func__, setpoint );
+    THERMO_TEMP_SET(1, TEMPSET);
+    THERMO_TEMP_SET(2, TEMPSET);
+}
 
-    THERMO_TEMP_SET(1, setpoint);
-    THERMO_TEMP_SET(2, setpoint);
+void switch_schedule()
+{
+    if ( schedule ) 
+    {
+        
+
+    } else {
+        // расписание выключено, установим глобальную уставку
+        THERMO_TEMP_SET(1, TEMPSET);
+        THERMO_TEMP_SET(2, TEMPSET);   
+    }
+    schedule = 1 - schedule;
 }
 
 void backlight_timer_cb(xTimerHandle tmr)   // rtos
@@ -773,7 +762,7 @@ void button1_long_press(void *args, uint8_t *state)
 {
     uint8_t backlight = LCD_BACKLIGHT_STATE;   
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
-    schedule = 1 - schedule;
+    switch_schedule();
     last_key_press = millis();
 }
 
@@ -865,6 +854,8 @@ void startfunc(){
     if ( SCHEDULE_LED_GPIO == 0 || SCHEDULE_LED_GPIO >= 255 ) { SCHEDULE_LED_GPIO = 255 ; err = 1; }
     if ( VENT_LED_GPIO == 0 || VENT_LED_GPIO >= 255 ) { VENT_LED_GPIO = 255 ; err = 1; }
 
+    if ( TEMPSET < 100 || TEMPSET > 300 ) { TEMPSET = 240 ; err = 1; }
+
     if ( err == 1 ) SAVEOPT;
 
     // установить прерывания пинов
@@ -932,6 +923,42 @@ void timerfunc(uint32_t  timersrc) {
         menu_idx = MENU_PAGE_MAIN;
     }
 
+    // управление уставками по расписанию
+    if ( schedule ) {
+        // проверить день недели
+
+        // цикл по элементам
+        // текущее время сравнить с установленным, 
+        // если текущее меньше больше установленного, то взять текущую уставку
+        // и так пройтись до конца расписания, перезаписывая уставку в термостаты
+        // если не нашлось ни одной уставки в расписании, то выставить глобальную уставку
+        // #maxscher - переменная прошивки, кол-во расписаний 
+
+        uint16_t local_tempset = TEMPSET;  // по дефолту из глобальной уставки возьмем
+
+        for ( uint8_t si = 0; si < maxscher; si++)
+        {
+            // проверяем день недели
+            if ( BIT_CHECK( sensors_param.schweek[si], time_loc.dow ) ) 
+            {
+                // день недели включен в шедулере
+                // теперь сравним вермя
+                uint16_t sched_t = sensors_param.scheduler[si][1]*60 + sensors_param.scheduler[si][2];
+                uint16_t loc_t = time_loc.hour * 60 + time_loc.min;
+                
+                if ( loc_t  >= sched_t ) 
+                {
+                    local_tempset = sensors_param.scheduler[si][3];
+                } 
+
+            }
+        }
+
+        shed_tempset = local_tempset;
+        THERMO_TEMP_SET(1, local_tempset);
+        THERMO_TEMP_SET(2, local_tempset);  
+    }
+
     show_page( menu_idx );
 
     // управление термостатами воды
@@ -995,6 +1022,8 @@ void timerfunc(uint32_t  timersrc) {
 
 void webfunc(char *pbuf) {
     os_sprintf(HTTPBUFF,"<br>Current temp = %d.%d", current_temp / 10, current_temp % 10); // вывод данных на главной модуля
+    os_sprintf(HTTPBUFF,"<br>GlobalTempSet = %d.%d", TEMPSET / 10, TEMPSET % 10); // вывод данных на главной модуля
+    os_sprintf(HTTPBUFF,"<br>shed_tempset = %d.%d", shed_tempset / 10, shed_tempset % 10); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>Schedule = %d", schedule); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>Work mode = %d", work_mode); // вывод данных на главной модуля
     os_sprintf(HTTPBUFF,"<br>Active kotel = %d", active_kotel); // вывод данных на главной модуля
