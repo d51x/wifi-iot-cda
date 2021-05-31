@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "1.02"
+#define FW_VER "1.03"
 
 
 /*
@@ -91,6 +91,7 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 // NVSCURRENT_TEMP
 #define SPACE_NAME "d51x"
 #define WORK_MODE_PARAM "workmode"
+#define SCHEDULE_PARAM "schedule"
 
 #define MCP23017_GPIO0   1 << 0     //0x0001
 #define MCP23017_GPIO1   1 << 1     //0x0002
@@ -486,7 +487,7 @@ void change_work_mode()
     if ( display_error == 1 ) return;
     work_mode++;
     if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
-    nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode));
+    nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode)); 
     set_active_kotel( work_mode );
 }
 
@@ -717,6 +718,9 @@ void switch_schedule()
         THERMO_TEMP_SET(2, TEMPSET);   
     }
     schedule = 1 - schedule;
+
+    nvs_param_save(SPACE_NAME, SCHEDULE_PARAM, &schedule, sizeof(schedule));
+
 }
 
 void backlight_timer_cb(xTimerHandle tmr)   // rtos
@@ -836,6 +840,9 @@ void startfunc(){
     if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &work_mode) != ESP_OK ) work_mode = MODE_MANUAL;
     ESP_LOGW(UTAG, "Loaded work mode = %d", work_mode);
 
+    if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &schedule) != ESP_OK ) schedule = 0;
+    ESP_LOGW(UTAG, "Loaded schedule = %d", schedule);
+
     uint8_t err = 0;
     if ( KOTEL1_GPIO == 0 || KOTEL1_GPIO >=255 ) { KOTEL1_GPIO = KOTEL1_GPIO_DEFAULT ; err = 1; }
     if ( KOTEL2_GPIO == 0 || KOTEL2_GPIO >= 255 ) { KOTEL2_GPIO = KOTEL2_GPIO_DEFAULT ; err = 1; }
@@ -942,7 +949,7 @@ void timerfunc(uint32_t  timersrc) {
             if ( BIT_CHECK( sensors_param.schweek[si], time_loc.dow ) ) 
             {
                 // день недели включен в шедулере
-                // теперь сравним вермя
+                // теперь сравним время
                 uint16_t sched_t = sensors_param.scheduler[si][1]*60 + sensors_param.scheduler[si][2];
                 uint16_t loc_t = time_loc.hour * 60 + time_loc.min;
                 
