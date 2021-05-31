@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.14"
+#define FW_VER "3.15"
 
 
 /*
@@ -197,8 +197,6 @@ typedef enum {
     MODE_MAX
 } mode_e;
 
-//mode_e work_mode = MODE_MANUAL; // TODO: переделать на valdes[2]
-
 typedef enum {
     KOTEL_NONE,
     KOTEL_1,
@@ -207,9 +205,6 @@ typedef enum {
 
 active_kotel_e active_kotel = KOTEL_NONE;
 
-//uint16_t schedule = 0;      // TODO: переделать на valdes[3]
-
-//uint16_t tempset = 240;
 uint16_t shed_tempset = 0;
 
 #define WORKMODE    work_mode
@@ -928,9 +923,23 @@ void startfunc(){
 
 void timerfunc(uint32_t  timersrc) {
     // выполнение кода каждую 1 секунду
+    if ( timersrc % 10 == 0 ) {
+        // записать изменения в nvs
+        uint16_t tmp_val = 0;
+        if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &tmp_val) == ESP_OK ) {
+            if ( tmp_val != work_mode )
+                nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode)); 
+        }
+
+        if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &tmp_val) == ESP_OK ) {
+            if ( tmp_val != schedule )
+                nvs_param_save(SPACE_NAME, SCHEDULE_PARAM, &schedule, sizeof(schedule)); 
+        }
+    }
+
     if ( timersrc % 30 == 0 ) {
         // выполнение кода каждые 30 секунд
-        set_active_kotel(work_mode);
+        set_active_kotel(work_mode); 
     }
 
     if ( menu_idx != MENU_PAGE_MAIN && ( millis() - last_key_press >= MENU_EXIT_TIMEOUT )) 
@@ -939,7 +948,7 @@ void timerfunc(uint32_t  timersrc) {
     }
 
     // управление уставками по расписанию
-    if ( schedule ) {
+    if ( timersrc % 30 == 0 && schedule ) {
         // проверить день недели
 
         // цикл по элементам
