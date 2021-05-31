@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "1.09"
+#define FW_VER "3.14"
 
 
 /*
@@ -871,7 +871,11 @@ void startfunc(){
 
     // установить прерывания пинов
     //MCPwrite_reg16(0, GPINTENA, MCP23017_GPIO0 | MCP23017_GPIO1 | MCP23017_GPIO2 | MCP23017_GPIO3 | MCP23017_GPIO4 | MCP23017_GPIO5); // 0b0000111000000000
-    MCPwrite_reg16(0, GPINTENA, 0b0000000000111111); // 0b0000111000000000
+    //uint16_t inout = MCPread_reg16(0, IODIRA);
+    //ESP_LOGI(UTAG, "%s: MCP23017 directions: " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, __func__ , BYTE_TO_BINARY(inout >> 8), BYTE_TO_BINARY(inout));
+
+    MCPwrite_reg16(0, GPINTENA, 0b1111111111111111); // 0b0000111000000000
+    //MCPwrite_reg16(0, GPINTENA, inout); // 0b0000111000000000
 
     // условия сработки прерывания на ногах
     MCPwrite_reg16(0, INTCONA, 0);  // при нулях
@@ -1036,17 +1040,15 @@ void webfunc(char *pbuf)
 
 
    //********************************************************************************************
-    os_sprintf(HTTPBUFF,"<br><div class='fll c2'>");
-    os_sprintf(HTTPBUFF,"<div class='fll'>Mode: </div>"); 
+    os_sprintf(HTTPBUFF,"<table><tr><td>Mode:</td><td>");
+ 
     #define html_button_mode "<a href='#' onclick='wm(%d)'><div class='g_%d k kk fll wm' id='v%d'>%s</div></a>"
     os_sprintf(HTTPBUFF, html_button_mode, MODE_MANUAL, work_mode == MODE_MANUAL,   MODE_MANUAL, "Manual");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_AUTO,   work_mode == MODE_AUTO,     MODE_AUTO, "Auto");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL1, work_mode == MODE_KOTEL1,   MODE_KOTEL1, "Kotel1");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL2, work_mode == MODE_KOTEL2,   MODE_KOTEL2, "Kotel2");
-    os_sprintf(HTTPBUFF,"</div>");
+    os_sprintf(HTTPBUFF,"</td></tr><tr><td>Schedule:</td><td>");
 
-    os_sprintf(HTTPBUFF,"<br><div class='fll c2'>");
-    os_sprintf(HTTPBUFF,"<div class='fll'>Schedule: </div>"); 
     os_sprintf(HTTPBUFF, "<a id='ushd' href='#' data-val='%d' onclick='schd(this.dataset.val)'><div class='g_%d k kk fll' id='sch' data-text='%s'>%s</div></a><br>"
                         , !schedule
                         , schedule
@@ -1054,7 +1056,17 @@ void webfunc(char *pbuf)
                         , schedule ? "On" : "Off"
                         );   
 
-    os_sprintf(HTTPBUFF,"</div>");
+    os_sprintf(HTTPBUFF,"</td></tr>");
+    os_sprintf(HTTPBUFF,"<tr><td>Temperature:</td><td><b>%d.%d °C</b></td></tr>", current_temp / 10, current_temp % 10); 
+    if ( schedule ) {
+        os_sprintf(HTTPBUFF,"<tr><td>Schedule tempset:</td><td><b>%d.%d °C</b></td></tr>", shed_tempset / 10, shed_tempset % 10);     
+    } else {
+        os_sprintf(HTTPBUFF,"<tr><td>Global tempset:</td><td><b>%d.%d °C</b></td></tr>", TEMPSET / 10, TEMPSET % 10);     
+    }
+    
+    os_sprintf(HTTPBUFF,"</table>");
+    os_sprintf(HTTPBUFF,"<small>Version: %s</small>", FW_VER); 
+
     // SCRIPT
     os_sprintf(HTTPBUFF, "<script type='text/javascript'>"
 
@@ -1101,14 +1113,7 @@ void webfunc(char *pbuf)
     );  
  
 
-    os_sprintf(HTTPBUFF,"<br>Temperature: %d.%d °C", current_temp / 10, current_temp % 10); 
-    if ( schedule ) {
-        os_sprintf(HTTPBUFF,"<br>Schedule tempset: %d.%d °C", shed_tempset / 10, shed_tempset % 10);     
-    } else {
-        os_sprintf(HTTPBUFF,"<br>Global tempset: %d.%d °C", TEMPSET / 10, TEMPSET % 10);     
-    }
 
-    os_sprintf(HTTPBUFF,"<br>ver.%s", FW_VER); 
 
   
 }
