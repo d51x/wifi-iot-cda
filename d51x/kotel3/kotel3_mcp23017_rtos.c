@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.21"
+#define FW_VER "3.31"
 
 
 /*
@@ -41,6 +41,7 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define street_temp         valdes[1]  // устанавливать через интерпретер или mqtt - valdes[0]
 #define work_mode           valdes[2]
 #define schedule            valdes[3]
+#define reset_fuel          valdes[4]
 
 #define VALDES_INDEX_WORK_MODE                  2   //  
 #define VALDES_INDEX_SCHEDULE                  3   //  
@@ -229,11 +230,19 @@ esp_err_t nvs_param_save_u16(const char* space_name, const char* key, uint16_t *
 
 esp_err_t nvs_param_save_u32(const char* space_name, const char* key, uint32_t *param)
 {
+    ESP_LOGI(UTAG, "%s: space = %s, param = %s", __func__, space_name, key);
     uint32_t val = 0;
     esp_err_t err = nvs_param_load(space_name, key, &val);
-    if ( err != ESP_OK ) return err;
-    if ( val != *param) {
+    ESP_LOGI(UTAG, "value in nvs = %d, value to save = %d", val, *param);
+    if ( err != ESP_OK ) {
         err = nvs_param_save(space_name, key, param, sizeof(uint32_t));
+        return err;
+    }
+    if ( val != *param) {
+        ESP_LOGI(UTAG, "need save");
+        err = nvs_param_save(space_name, key, param, sizeof(uint32_t));
+    } else {
+        ESP_LOGI(UTAG, "no need save");
     }
     return err;
 }
@@ -1070,6 +1079,7 @@ uint32_t fpump_work_time = 0;             // время работы за все
 uint32_t fpump_today_time = 0;          // время работы за сегодня
 uint32_t fpump_prev_time = 0;           // время работы за вчера
 // расходы
+uint32_t i_fuel_consump_last;                    // предыдущий расход
 uint32_t i_fuel_consump_now;                    // текущий расход
 uint32_t i_fuel_consump_today;                    // расход за сегодня
 uint32_t i_fuel_consump_prev;                       // расход за вчера
@@ -1077,12 +1087,15 @@ uint32_t i_fuel_consump_total;                  // расход за все вр
 
 // NVS FUEL PUMP
 #define SPACE_FUEL_PUMP "fuelpump"
-#define FUEL_CONSUMP_LAST_PARAM "conslast"      // расход за последнее включение
+#define FUEL_STATE_CNT_PARAM "fuelcnt"      // расход за предыдущее включение
+#define FUEL_CONSUMP_LAST_PARAM "conslast"      // расход за предыдущее включение
+#define FUEL_CONSUMP_NOW_PARAM "consnow"      // расход за последнее включение
 #define FUEL_CONSUMP_DAY_PARAM "consday"        // расход за день
 #define FUEL_CONSUMP_PREV_PARAM "consprev"      // расход за вчера
 #define FUEL_CONSUMP_TOTAL_PARAM "consttl"      // расход общий
 
-#define FUEL_WORKTIME_LAST_PARAM "wrktlast"     // последняя длительность работы
+#define FUEL_WORKTIME_LAST_PARAM "wrktlast"     // предыдущая длительность работы
+#define FUEL_WORKTIME_NOW_PARAM "wrktnow"     // последняя длительность работы
 #define FUEL_WORKTIME_DAY_PARAM "wrktday"       // длительность работы сегодня
 #define FUEL_WORKTIME_PREV_PARAM "wrktprev"     // длительность работы вчера
 #define FUEL_WORKTIME_TOTAL_PARAM "wrktttl"     // длительность работы общая
@@ -1104,6 +1117,7 @@ uint32_t get_consump_prev()
 
 void detect_fuel_pump_work()
 {
+   // ESP_LOGI(UTAG, "%s", __func__);
     #ifdef count60e     // on/off option
         fpump_state = ( count60end[0] > COUNTER_THRESHOLD );  // если просто > 0? то проскакивают левые импульсы
 
@@ -1118,22 +1132,35 @@ void detect_fuel_pump_work()
                 // переключился из 0 в 1  (!!! может проскакивать импульс и поэтому cnt увеличивается на 1 и предыдущее время обнуляется, регулируется отсечкой подсчета импульсов)
                 fpump_on_cnt++;
                 fpump_start_dt = millis();  // при включении начали отсчет
-                i_fuel_consump_now = 0;     // обнуление текущего расхода                
+                i_fuel_consump_now = 0;     // обнуление текущего расхода       
+
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_STATE_CNT_PARAM, &fpump_on_cnt);         
             } else {
                 // переключился из 1 в 0
 
-                // сохраним результаты подсчета в nvs
-                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
-                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
-                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
 
-                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration);
-                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
-                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);
-               
+                
+                i_fuel_consump_last = i_fuel_consump_now;
                 i_fuel_consump_now = 0;
                 fpump_on_duration_prev = fpump_on_duration;
                 fpump_on_duration = 0;
+
+                // LAST
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_last);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+
+                // now (last)
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_NOW_PARAM, &i_fuel_consump_now);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_NOW_PARAM, &fpump_on_duration);
+                // сохраним результаты подсчета в nvs
+
+                // today
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
+
+                // total
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);
 		    }
         }
     #endif
@@ -1141,23 +1168,28 @@ void detect_fuel_pump_work()
 
 void fuel_consumption_calc()
 {
+    //ESP_LOGI(UTAG, "%s", __func__);
     #ifdef count60e     // on/off option
 
-        if ( time_loc.hour == 0 && time_loc.min == 0 && time_loc.sec == 0 )
+        static uint8_t real_zero = 1;
+        if ( time_loc.hour == 1 && time_loc.min == 0 && time_loc.sec == 0 )
         {
-            // обнулить суточные данные ночью
+            // обнулить суточные данные ночью (в час ночи)
             fpump_prev_time = fpump_today_time;
             fpump_today_time = 0;
             i_fuel_consump_prev = i_fuel_consump_today;
             i_fuel_consump_today = 0;
             fpump_on_cnt = 0;
 
-            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
-            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
+            if ( real_zero  ){
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
             
-            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
-            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
-        } 
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
+                real_zero = 0;
+            }
+        }
 
         if ( fpump_state ) {
             // топливный насос включен, увеличиваем расходы
@@ -1166,6 +1198,7 @@ void fuel_consumption_calc()
             i_fuel_consump_total++; // увеличиваем время работы за все время
             i_fuel_consump_now += CONSUMP_L_SEC*100000; // увеличиваем счетчик текущего расхода
             i_fuel_consump_today += CONSUMP_L_SEC*100000; // увеличиваем счетчик расходня за сегодня
+            i_fuel_consump_total += CONSUMP_L_SEC*100000; // увеличиваем счетчик расходня за сегодня
             fpump_on_duration = millis() - fpump_start_dt;	// считаем время
         }    
     #endif
@@ -1173,23 +1206,30 @@ void fuel_consumption_calc()
 
 void fuel_reset_data()
 {
+    ESP_LOGI(UTAG, "%s", __func__);
+    i_fuel_consump_last = 0;
     i_fuel_consump_now = 0;
     i_fuel_consump_total = 0;
     i_fuel_consump_today = 0;
     i_fuel_consump_prev = 0;
     
+    fpump_on_duration_prev = 0;
     fpump_on_duration = 0;
     fpump_work_time = 0;
     fpump_today_time = 0;
     fpump_prev_time = 0;
     fpump_on_cnt = 0;   
 
-    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_STATE_CNT_PARAM, &fpump_on_cnt); 
+    
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_last);            
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_NOW_PARAM, &i_fuel_consump_now);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
 
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_NOW_PARAM, &fpump_on_duration);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);     
@@ -1197,36 +1237,84 @@ void fuel_reset_data()
 
 void fuel_save_data()
 {
-    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
-    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
-    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
-    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+    ESP_LOGI(UTAG, "%s", __func__);
 
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_STATE_CNT_PARAM, &fpump_on_cnt); 
+
+    // last
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_last);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &fpump_on_duration_prev);
+	    
+    // now (last)
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_NOW_PARAM, &i_fuel_consump_now);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_NOW_PARAM, &fpump_on_duration);
+
+    // today
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
-    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+
+    // yesterday
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
+
+    // total
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);    
     nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);
 }
 
 void fuel_load_data()
 {
-    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
+    ESP_LOGI(UTAG, "%s", __func__);
+
+    // prev
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_last);
+    ESP_LOGI(UTAG, "loaded " FUEL_CONSUMP_LAST_PARAM " = %d", i_fuel_consump_last);
+
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+    ESP_LOGI(UTAG, "loaded " FUEL_WORKTIME_LAST_PARAM " = %d", fpump_on_duration_prev);
+
+    // now
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_NOW_PARAM, &i_fuel_consump_now);
+    ESP_LOGI(UTAG, "loaded " FUEL_CONSUMP_NOW_PARAM " = %d", i_fuel_consump_now);
+
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_NOW_PARAM, &fpump_on_duration);
+    ESP_LOGI(UTAG, "loaded " FUEL_WORKTIME_NOW_PARAM " = %d", fpump_on_duration);
+
+    // today
     nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
-    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
-    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+    ESP_LOGI(UTAG, "loaded " FUEL_CONSUMP_DAY_PARAM " = %d", i_fuel_consump_today);
 
     nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
-    nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+    ESP_LOGI(UTAG, "loaded " FUEL_WORKTIME_DAY_PARAM " = %d", fpump_today_time);
+
+    // yesterday
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
+    ESP_LOGI(UTAG, "loaded " FUEL_CONSUMP_PREV_PARAM " = %d", i_fuel_consump_prev);
+
     nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
+    ESP_LOGI(UTAG, "loaded " FUEL_WORKTIME_PREV_PARAM " = %d", i_fuel_consump_prev);
+
+    // total
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+    ESP_LOGI(UTAG, "loaded " FUEL_CONSUMP_TOTAL_PARAM " = %d", i_fuel_consump_total);
+
     nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);
+    ESP_LOGI(UTAG, "loaded " FUEL_WORKTIME_TOTAL_PARAM " = %d", fpump_work_time);
 }
 
 void webfunc_print_fuel_pump_data(char *pbuf)
 {
 	os_sprintf(HTTPBUFF, "<hr>");
+	
 	os_sprintf(HTTPBUFF, "<b>Fuel Pump:</b> %s &nbsp; <b>count:</b> %d <br>", fpump_state ? "ON" : "OFF", fpump_on_cnt );
-	os_sprintf(HTTPBUFF, "<b>PrevDuration:</b> %d:%02d <br>", (fpump_on_duration_prev / 1000) / 60,  (fpump_on_duration_prev / 1000) % 60);
-   
+	//os_sprintf(HTTPBUFF, "<details><summary>");
+    os_sprintf(HTTPBUFF, "<b>PrevDuration:</b> %d:%02d", (fpump_on_duration_prev / 1000) / 60,  (fpump_on_duration_prev / 1000) % 60);
+	os_sprintf(HTTPBUFF, "&nbsp;<b>PrevConsumption:</b> %d.%03d<br>", i_fuel_consump_last / 100000, (i_fuel_consump_last % 100000) / 100);
+    
+    
+    //os_sprintf(HTTPBUFF, "</summary>");
+    
+
 	uint32_t sec = fpump_work_time % 60;
 	uint32_t min = fpump_work_time / 60;
 	uint32_t hour = (min / 60 % 24);
@@ -1278,7 +1366,8 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 							, i_fuel_consump_total / 100000, (i_fuel_consump_total % 100000) / 100
 	);	
 
-	os_sprintf(HTTPBUFF, 	"</table>");        
+	os_sprintf(HTTPBUFF, 	"</table>"); 
+    os_sprintf(HTTPBUFF, "</details>");      
 }
 //*****************************************************************************************************************
 //****************** основные функции прошивки ********************************************************************
@@ -1412,8 +1501,14 @@ void timerfunc(uint32_t  timersrc) {
     detect_fuel_pump_work();
     fuel_consumption_calc();
     
-    if ( timersrc % 1800 ) {  // каждые 30 мин
+    if ( timersrc % 1800 == 0 ) {  // каждые 30 мин
         fuel_save_data();
+    }
+
+    if ( reset_fuel )
+    {
+        fuel_reset_data();
+        reset_fuel = 0;
     }
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
