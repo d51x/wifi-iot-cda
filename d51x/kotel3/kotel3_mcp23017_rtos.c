@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.15"
+#define FW_VER "3.21"
 
 
 /*
@@ -96,45 +96,7 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define WORK_MODE_PARAM "workmode"
 #define SCHEDULE_PARAM "schedule"
 
-#define MCP23017_GPIO0   1 << 0     //0x0001
-#define MCP23017_GPIO1   1 << 1     //0x0002
-#define MCP23017_GPIO2   1 << 2     //0x0004
-#define MCP23017_GPIO3   1 << 3     //0x0008
-#define MCP23017_GPIO4   1 << 4     //0x0010
-#define MCP23017_GPIO5   1 << 5     //0x0020
-#define MCP23017_GPIO6   1 << 6     //0x0040
-#define MCP23017_GPIO7   1 << 7     //0x0080
-#define MCP23017_GPIO8   1 << 8     //0x0100
-#define MCP23017_GPIO9   1 << 9     //0x0200
-#define MCP23017_GPIO10  1 << 10    //0x0400
-#define MCP23017_GPIO11  1 << 11    //0x0800
-#define MCP23017_GPIO12  1 << 12    //0x1000
-#define MCP23017_GPIO13  1 << 13    //0x2000
-#define MCP23017_GPIO14  1 << 14    //0x4000
-#define MCP23017_GPIO15  1 << 15    //0x8000
 
-#define IODIRA      0x00    // регистр, указыващий направления портов output/input
-#define IODIRB      0x01
-#define IPOLA       0x02    // инверсия ног
-#define IPOLB       0x03
-#define GPINTENA    0x04    // прерывания на ногах
-#define GPINTENB    0x05
-#define DEFVALA     0x06    // дефолтные значения ног, прерывание сработает, если на ноге сигнал отличается от дефолтного
-#define DEFVALB     0x07
-#define INTCONA     0x08    // условия сработки прерывания на ногах
-#define INTCONB     0x09
-#define IOCONA      0x0A    // конфигурационный регистр
-#define IOCONB      0x0B
-#define GPPUA       0x0C    // подтяжка ног 100к
-#define GPPUB       0x0D
-#define INTFA       0x0E    // регистр флагов прерываний, покажет на какой ноге было прерывание
-#define INTFB       0x0F
-#define INTCAPA     0x10    // покажет что было на ноге в момент прерывания на этой ноге
-#define INTCAPB     0x11
-#define GPIOA       0x12    // состояние ног, когда было прерывание на ноге может уже быть другое значение и надо читать INTCAP, если работаем с прерываниями
-#define GPIOB       0x13
-#define OLATA       0x14    
-#define OLATB       0x15
 
 
 
@@ -208,10 +170,7 @@ active_kotel_e active_kotel = KOTEL_NONE;
 uint16_t shed_tempset = 0;
 
 #define WORKMODE    work_mode
-#define ADDLISTSENS {200,LSENSFL0,"WorkMode","workmode",&WORKMODE,NULL}, \
-                    {201,LSENSFL1,"Temperature","temp",&current_temp,NULL}, \
-                    {202,LSENSFL0,"Schedule","schedule",&schedule,NULL}, \
-                    {203,LSENSFL0,"TempSet","tempset",&TEMPSET,NULL},
+
 
 
 uint8_t display_error = 0;
@@ -220,22 +179,6 @@ TimerHandle_t  show_error_timer;
 
 uint32_t last_key_press = 0;
 #define MENU_EXIT_TIMEOUT 10000 // 10 sec
-
-
-esp_err_t nvs_param_save(const char* space_name, const char* key, void *param, uint16_t len)
-{
-    esp_err_t ret = ESP_ERR_INVALID_ARG;
-    nvs_handle my_handle;
-    ret = nvs_open(space_name, NVS_READWRITE, &my_handle);
-    ret = nvs_set_blob(my_handle, key, param, len);
-    ret = nvs_commit(my_handle);
-
-SAVE_FINISH:
-    nvs_close(my_handle);
-
-OPEN_FAIL:
-    return ret;
-}
 
 esp_err_t nvs_param_load(const char* space_name, const char* key, void* dest)
 {
@@ -251,129 +194,83 @@ esp_err_t nvs_param_load(const char* space_name, const char* key, void* dest)
     }
     ret = nvs_get_blob(my_handle, key, dest, &required_size);
 
-LOAD_FINISH:
+  LOAD_FINISH:
     nvs_close(my_handle);
 
-OPEN_FAIL:
+  OPEN_FAIL:
     return ret;
 }
 
-static void IRAM_ATTR mcp23017_isr_handler(void *arg) {
-    portBASE_TYPE HPTaskAwoken = pdFALSE;
-    BaseType_t xHigherPriorityTaskWoken;
+esp_err_t nvs_param_save(const char* space_name, const char* key, void *param, uint16_t len)
+{
+    esp_err_t ret = ESP_ERR_INVALID_ARG;
+    nvs_handle my_handle;
+    ret = nvs_open(space_name, NVS_READWRITE, &my_handle);
+    ret = nvs_set_blob(my_handle, key, param, len);
+    ret = nvs_commit(my_handle);
 
-    uint16_t data[2];
+  SAVE_FINISH:
+    nvs_close(my_handle);
 
-    data[0] = MCPread_reg16(0, INTFA); // считываем данные с mcp23017
-    data[1] = MCPread_reg16(0, INTCAPA); // считываем данные с mcp23017 // чтение снимка ножек при прерывании сбрасывает прерывание
+  OPEN_FAIL:
+    return ret;
+}
 
-    static uint32_t t = 0;
+esp_err_t nvs_param_save_u16(const char* space_name, const char* key, uint16_t *param)
+{
+    uint16_t val = 0;
+    esp_err_t err = nvs_param_load(space_name, key, &val);
+    if ( err != ESP_OK ) return err;
+    if ( val != *param) {
+        err = nvs_param_save(space_name, key, param, sizeof(uint16_t));
+    }
+    return err;
+}
 
-    if ( millis() - t >= MCP23017_ISR_DELAY_MS )
+esp_err_t nvs_param_save_u32(const char* space_name, const char* key, uint32_t *param)
+{
+    uint32_t val = 0;
+    esp_err_t err = nvs_param_load(space_name, key, &val);
+    if ( err != ESP_OK ) return err;
+    if ( val != *param) {
+        err = nvs_param_save(space_name, key, param, sizeof(uint32_t));
+    }
+    return err;
+}
+
+
+// ******************************************************************************
+// ********** УПРАВЛЕНИЕ ПОДСВЕТКОЙ ДИСПЛЕЯ И ВЫВОДОМ ***************************
+// ******************************************************************************
+void backlight_timer_cb(xTimerHandle tmr)   // rtos
+{
+    uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
+    GPIO_ALL(pin, 0);
+    xTimerStop(tmr, 10);
+    xTimerDelete(tmr, 10);
+    backlight_timer = NULL;
+}
+
+void turn_on_lcd_backlight(uint8_t pin, uint8_t *state)
+{
+    
+   // каждое нажатие кнопки включает подсветку дисплея
+    GPIO_ALL(pin, 1);
+
+    // и запускает таймер на отключение подсветки дисплея на Х секунд, передается в аргументе
+    // BACKLIGHT_TIMEOUT
+    if ( backlight_timer == NULL )
     {
-        xQueueOverwriteFromISR(mcp23017_queue, &data, &xHigherPriorityTaskWoken);
-        t = millis();
-    }
-    portEND_SWITCHING_ISR( HPTaskAwoken == pdTRUE );
-}
-
-static void mcp23017_isr_cb(void *arg) {
-	while (1) {
-
-            uint16_t data[2];
-            if ( xQueueReceive(mcp23017_queue, &data, 0) == pdPASS) 
-            {
-                //ESP_LOGI(UTAG, " interrput: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[0], data[0], BYTE_TO_BINARY(data[0] >> 8), BYTE_TO_BINARY(data[0]));
-                //ESP_LOGI(UTAG, "gpio state: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[1], data[1], BYTE_TO_BINARY(data[1] >> 8), BYTE_TO_BINARY(data[1]));
-
-                // check pins with interrupts
-                for ( uint8_t i = 0; i < 16; i++)
-                {  
-                    if ( BIT_CHECK( data[0], i) != 0)
-                    {
-                        // check pin state
-                        uint8_t state = BIT_CHECK( data[1], i) != 0;                        
-                        //ESP_LOGI(UTAG, "pin = %d, state = %d", i+1, state);                        
-                        
-                        // поиск коллбека для нажатия кнопок
-                        for ( uint8_t j = 0; j < pin_isr_cnt; j++)
-                        {
-                            if ( pin_isr[ j ].pin == i )
-                            {
-                                //ESP_LOGI(UTAG, "pin = %d, state = %d, intr type: %d", i+1, state, pin_isr[ j ].intr_type);  
-                                if ( ( state == 0 && pin_isr[ j ].intr_type == GPIO_INTR_POSEDGE) || 
-                                     ( state == 1 && pin_isr[ j ].intr_type == GPIO_INTR_NEGEDGE))
-                                {
-                                    pin_isr[ j ].ts_down = millis();
-                                    pin_isr[ j ].ts_up = millis();
-                                }
-
-                                if (( state == 1 && pin_isr[ j ].intr_type == GPIO_INTR_POSEDGE) || 
-                                    ( state == 0 && pin_isr[ j ].intr_type == GPIO_INTR_NEGEDGE))
-                                {
-                                    pin_isr[ j ].ts_up = millis();
-                                    // execute callback
-                                    if ( ( pin_isr[ j ].ts_up - pin_isr[ j ].ts_down <= pin_isr[ j ].up_delay_ms ) 
-                                         || 
-                                         pin_isr[ j ].pin_cb2 == NULL)
-                                    {
-                                        pin_isr[ j ].pin_cb( pin_isr[ j ].args, &state );
-                                    } else {
-                                        if ( pin_isr[ j ].pin_cb2 != NULL )
-                                            pin_isr[ j ].pin_cb2( pin_isr[ j ].args2, &state );
-                                    }
-                                } 
-                                else if ( pin_isr[ j ].intr_type == GPIO_INTR_ANYEDGE )
-                                {
-                                    pin_isr[ j ].pin_cb( pin_isr[ j ].args, &state );
-                                }
-                            }
-                        }                               
-                    }
-                }
-            }
-        vTaskDelay( 10 / portTICK_PERIOD_MS );
-    }
-    vTaskDelete(NULL);
-}
-
-esp_err_t mcp23017_isr_handler_add(uint8_t pin, gpio_int_type_t intr_type, interrupt_cb cb, void *args, interrupt_cb cb2, void *args2, uint32_t up_delay)
-{
-    if ( cb == NULL ) return ESP_FAIL;
-
-    pin_isr_cnt++;
-    pin_isr = (mcp23017_pin_isr_t *) realloc(pin_isr, pin_isr_cnt * sizeof(mcp23017_pin_isr_t));
-    if ( pin_isr == NULL ) {
-        pin_isr_cnt--;
-        return ESP_FAIL;
+        backlight_timer = xTimerCreate("bcklght", BACKLIGHT_TIMEOUT * 1000 / portTICK_PERIOD_MS, pdFALSE, pin, backlight_timer_cb);
     }
 
-    pin_isr[ pin_isr_cnt-1 ].pin = pin;
-    pin_isr[ pin_isr_cnt-1 ].pin_cb = cb;
-    pin_isr[ pin_isr_cnt-1 ].intr_type = intr_type;
-    pin_isr[ pin_isr_cnt-1 ].args = args;
+    if ( xTimerIsTimerActive( backlight_timer ) == pdTRUE )
+    {
+        xTimerStop( backlight_timer, 0);
+    }    
 
-    pin_isr[ pin_isr_cnt-1 ].pin_cb2 = cb2;
-    pin_isr[ pin_isr_cnt-1 ].args2 = args2;
-
-    pin_isr[ pin_isr_cnt-1 ].up_delay_ms = up_delay;
-
-    return ESP_OK;     
+    xTimerStart( backlight_timer, 0);
 }
-
-void mcp23017_button_isr_cb(uint8_t pin, uint8_t *state)
-{
-    //ESP_LOGI(UTAG, "%s: pin %d, state %d", __func__, pin, *state);
-    GPIO_ALL(pin, !GPIO_ALL_GET(pin));
-}
-
-void mcp23017_pir_sensor_cb(uint8_t pin, uint8_t *state)
-{
-    //ESP_LOGI(UTAG, "%s: pin %d, state %d", __func__, pin, *state);
-
-    GPIO_ALL(pin, *state);
-}
-
 
 void lcd_print_(uint8_t line, const char *str)
 {
@@ -446,48 +343,6 @@ void show_display_error(const char *str)
 
     // show error
     print_error(str);
-}
-
-void set_active_kotel(mode_e mode)
-{
-    switch ( mode ) {
-        case MODE_MANUAL:
-            active_kotel = KOTEL_NONE;
-            break;
-        case MODE_AUTO:
-            // выбираем по времени
-            active_kotel = ( time_loc.hour >= DAY_TIME && time_loc.hour < NIGHT_TIME) ? KOTEL_1 : KOTEL_2;             
-            break;
-        case MODE_KOTEL1: 
-            active_kotel = KOTEL_1;          
-            break;        
-        case MODE_KOTEL2: 
-            active_kotel = KOTEL_2;       
-            break;
-        default:      
-            active_kotel = KOTEL_NONE;
-    } 
-
-    if ( mode != MODE_MANUAL) 
-    {
-        GPIO_ALL(100, active_kotel == KOTEL_1 );
-        if ( active_kotel != KOTEL_1 ) GPIO_ALL(KOTEL1_GPIO, 0 );
-
-        GPIO_ALL(101, active_kotel == KOTEL_2 );
-        if ( active_kotel != KOTEL_2 ) GPIO_ALL(KOTEL2_GPIO, 0 );        
-    } else {
-        GPIO_ALL(100, 0 );
-        GPIO_ALL(101, 0 );
-    }
-}
-
-void change_work_mode()
-{
-    if ( display_error == 1 ) return;
-    work_mode++;
-    if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
-    nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode)); 
-    set_active_kotel( work_mode );
 }
 
 void switch_menu()
@@ -679,6 +534,9 @@ void show_page(uint8_t idx)
     } 
 }
 
+// ********************************************************************************
+// ************ ФУНКЦИИ УПРАВЛЕНИЯ ТЕРМОСТАТАМИ И УСТАВКАМИ ***********************
+// ********************************************************************************
 void tempset_dec()
 {
     //uint16_t setpoint = THERMO_SETPOINT(1);
@@ -718,38 +576,274 @@ void switch_schedule()
     }
     schedule = 1 - schedule;
 
-    nvs_param_save(SPACE_NAME, SCHEDULE_PARAM, &schedule, sizeof(schedule));
+    nvs_param_save_u32(SPACE_NAME, SCHEDULE_PARAM, &schedule);
 
 }
 
-void backlight_timer_cb(xTimerHandle tmr)   // rtos
+void set_tempset_by_schedule(uint8_t _schedule)
 {
-    uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
-    GPIO_ALL(pin, 0);
-    xTimerStop(tmr, 10);
-    xTimerDelete(tmr, 10);
-    backlight_timer = NULL;
-}
-
-void turn_on_lcd_backlight(uint8_t pin, uint8_t *state)
-{
+    if ( !_schedule ) return;
     
-   // каждое нажатие кнопки включает подсветку дисплея
-    GPIO_ALL(pin, 1);
+    // проверить день недели
 
-    // и запускает таймер на отключение подсветки дисплея на Х секунд, передается в аргументе
-    // BACKLIGHT_TIMEOUT
-    if ( backlight_timer == NULL )
+    // цикл по элементам
+    // текущее время сравнить с установленным, 
+    // если текущее меньше больше установленного, то взять текущую уставку
+    // и так пройтись до конца расписания, перезаписывая уставку в термостаты
+    // если не нашлось ни одной уставки в расписании, то выставить глобальную уставку
+    // #maxscher - переменная прошивки, кол-во расписаний 
+
+    uint16_t local_tempset = TEMPSET;  // по дефолту из глобальной уставки возьмем
+
+    for ( uint8_t si = 0; si < maxscher; si++)
     {
-        backlight_timer = xTimerCreate("bcklght", BACKLIGHT_TIMEOUT * 1000 / portTICK_PERIOD_MS, pdFALSE, pin, backlight_timer_cb);
+        // проверяем день недели
+        if ( BIT_CHECK( sensors_param.schweek[si], time_loc.dow ) ) 
+        {
+            // день недели включен в шедулере
+            // теперь сравним время
+            uint16_t sched_t = sensors_param.scheduler[si][1]*60 + sensors_param.scheduler[si][2];
+            uint16_t loc_t = time_loc.hour * 60 + time_loc.min;
+            
+            if ( loc_t  >= sched_t ) 
+            {
+                local_tempset = sensors_param.scheduler[si][3];
+            } 
+
+        }
     }
 
-    if ( xTimerIsTimerActive( backlight_timer ) == pdTRUE )
-    {
-        xTimerStop( backlight_timer, 0);
-    }    
+    shed_tempset = local_tempset;
+    THERMO_TEMP_SET(1, local_tempset);
+    THERMO_TEMP_SET(2, local_tempset);  
+    
+}
 
-    xTimerStart( backlight_timer, 0);
+void control_return_water_thermostats()
+{
+    // управление термостатами воды
+    if ( GPIO_ALL_GET(KOTEL1_GPIO) == 1 ) {
+        // котел включен, включим термостат воды 
+       THERMO_ON(3);
+    } else {
+        // котел выключили, ждем понижения температуры обратки
+        // т.е отключения реле насоса и выключаем термостат воды
+        if ( GPIO_ALL_GET(PUMP1_GPIO) == 0 || GPIO_ALL_GET(KOTEL2_GPIO) == 1) THERMO_OFF(3);
+    }
+
+    if ( GPIO_ALL_GET(KOTEL2_GPIO) == 1 ) {
+        // котел включили
+       THERMO_ON(4);
+    } else {
+        // котел выключили, ждем понижения температуры обратки
+        // или отключения реле насоса и выключаем термостат воды
+        if ( GPIO_ALL_GET(PUMP2_GPIO) == 0 || GPIO_ALL_GET(KOTEL1_GPIO) == 1) THERMO_OFF(4);
+    }  
+}
+
+void set_active_kotel(mode_e mode)
+{
+    switch ( mode ) {
+        case MODE_MANUAL:
+            active_kotel = KOTEL_NONE;
+            break;
+        case MODE_AUTO:
+            // выбираем по времени
+            active_kotel = ( time_loc.hour >= DAY_TIME && time_loc.hour < NIGHT_TIME) ? KOTEL_1 : KOTEL_2;             
+            break;
+        case MODE_KOTEL1: 
+            active_kotel = KOTEL_1;          
+            break;        
+        case MODE_KOTEL2: 
+            active_kotel = KOTEL_2;       
+            break;
+        default:      
+            active_kotel = KOTEL_NONE;
+    } 
+
+    if ( mode != MODE_MANUAL) 
+    {
+        GPIO_ALL(100, active_kotel == KOTEL_1 );
+        if ( active_kotel != KOTEL_1 ) GPIO_ALL(KOTEL1_GPIO, 0 );
+
+        GPIO_ALL(101, active_kotel == KOTEL_2 );
+        if ( active_kotel != KOTEL_2 ) GPIO_ALL(KOTEL2_GPIO, 0 );        
+    } else {
+        GPIO_ALL(100, 0 );
+        GPIO_ALL(101, 0 );
+    }
+}
+
+void change_work_mode()
+{
+    if ( display_error == 1 ) return;
+    work_mode++;
+    if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
+    nvs_param_save_u32(SPACE_NAME, WORK_MODE_PARAM, &work_mode); 
+    set_active_kotel( work_mode );
+}
+
+// *******************************************************************************
+// ************** ОБРАБОТЧИК ПРЕРЫВАНИЙ MCP23017 *********************************
+// *******************************************************************************
+#define MCP23017_GPIO0   1 << 0     //0x0001
+#define MCP23017_GPIO1   1 << 1     //0x0002
+#define MCP23017_GPIO2   1 << 2     //0x0004
+#define MCP23017_GPIO3   1 << 3     //0x0008
+#define MCP23017_GPIO4   1 << 4     //0x0010
+#define MCP23017_GPIO5   1 << 5     //0x0020
+#define MCP23017_GPIO6   1 << 6     //0x0040
+#define MCP23017_GPIO7   1 << 7     //0x0080
+#define MCP23017_GPIO8   1 << 8     //0x0100
+#define MCP23017_GPIO9   1 << 9     //0x0200
+#define MCP23017_GPIO10  1 << 10    //0x0400
+#define MCP23017_GPIO11  1 << 11    //0x0800
+#define MCP23017_GPIO12  1 << 12    //0x1000
+#define MCP23017_GPIO13  1 << 13    //0x2000
+#define MCP23017_GPIO14  1 << 14    //0x4000
+#define MCP23017_GPIO15  1 << 15    //0x8000
+
+#define IODIRA      0x00    // регистр, указыващий направления портов output/input
+#define IODIRB      0x01
+#define IPOLA       0x02    // инверсия ног
+#define IPOLB       0x03
+#define GPINTENA    0x04    // прерывания на ногах
+#define GPINTENB    0x05
+#define DEFVALA     0x06    // дефолтные значения ног, прерывание сработает, если на ноге сигнал отличается от дефолтного
+#define DEFVALB     0x07
+#define INTCONA     0x08    // условия сработки прерывания на ногах
+#define INTCONB     0x09
+#define IOCONA      0x0A    // конфигурационный регистр
+#define IOCONB      0x0B
+#define GPPUA       0x0C    // подтяжка ног 100к
+#define GPPUB       0x0D
+#define INTFA       0x0E    // регистр флагов прерываний, покажет на какой ноге было прерывание
+#define INTFB       0x0F
+#define INTCAPA     0x10    // покажет что было на ноге в момент прерывания на этой ноге
+#define INTCAPB     0x11
+#define GPIOA       0x12    // состояние ног, когда было прерывание на ноге может уже быть другое значение и надо читать INTCAP, если работаем с прерываниями
+#define GPIOB       0x13
+#define OLATA       0x14    
+#define OLATB       0x15
+
+static void IRAM_ATTR mcp23017_isr_handler(void *arg) {
+    portBASE_TYPE HPTaskAwoken = pdFALSE;
+    BaseType_t xHigherPriorityTaskWoken;
+
+    uint16_t data[2];
+
+    data[0] = MCPread_reg16(0, INTFA); // считываем данные с mcp23017
+    data[1] = MCPread_reg16(0, INTCAPA); // считываем данные с mcp23017 // чтение снимка ножек при прерывании сбрасывает прерывание
+
+    static uint32_t t = 0;
+
+    if ( millis() - t >= MCP23017_ISR_DELAY_MS )
+    {
+        xQueueOverwriteFromISR(mcp23017_queue, &data, &xHigherPriorityTaskWoken);
+        t = millis();
+    }
+    portEND_SWITCHING_ISR( HPTaskAwoken == pdTRUE );
+}
+
+static void mcp23017_isr_cb(void *arg) {
+	while (1) {
+
+            uint16_t data[2];
+            if ( xQueueReceive(mcp23017_queue, &data, 0) == pdPASS) 
+            {
+                //ESP_LOGI(UTAG, " interrput: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[0], data[0], BYTE_TO_BINARY(data[0] >> 8), BYTE_TO_BINARY(data[0]));
+                //ESP_LOGI(UTAG, "gpio state: %4d \t 0x%04X \t " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, data[1], data[1], BYTE_TO_BINARY(data[1] >> 8), BYTE_TO_BINARY(data[1]));
+
+                // check pins with interrupts
+                for ( uint8_t i = 0; i < 16; i++)
+                {  
+                    if ( BIT_CHECK( data[0], i) != 0)
+                    {
+                        // check pin state
+                        uint8_t state = BIT_CHECK( data[1], i) != 0;                        
+                        //ESP_LOGI(UTAG, "pin = %d, state = %d", i+1, state);                        
+                        
+                        // поиск коллбека для нажатия кнопок
+                        for ( uint8_t j = 0; j < pin_isr_cnt; j++)
+                        {
+                            if ( pin_isr[ j ].pin == i )
+                            {
+                                //ESP_LOGI(UTAG, "pin = %d, state = %d, intr type: %d", i+1, state, pin_isr[ j ].intr_type);  
+                                if ( ( state == 0 && pin_isr[ j ].intr_type == GPIO_INTR_POSEDGE) || 
+                                     ( state == 1 && pin_isr[ j ].intr_type == GPIO_INTR_NEGEDGE))
+                                {
+                                    pin_isr[ j ].ts_down = millis();
+                                    pin_isr[ j ].ts_up = millis();
+                                }
+
+                                if (( state == 1 && pin_isr[ j ].intr_type == GPIO_INTR_POSEDGE) || 
+                                    ( state == 0 && pin_isr[ j ].intr_type == GPIO_INTR_NEGEDGE))
+                                {
+                                    pin_isr[ j ].ts_up = millis();
+                                    // execute callback
+                                    if ( ( pin_isr[ j ].ts_up - pin_isr[ j ].ts_down <= pin_isr[ j ].up_delay_ms ) 
+                                         || 
+                                         pin_isr[ j ].pin_cb2 == NULL)
+                                    {
+                                        pin_isr[ j ].pin_cb( pin_isr[ j ].args, &state );
+                                    } else {
+                                        if ( pin_isr[ j ].pin_cb2 != NULL )
+                                            pin_isr[ j ].pin_cb2( pin_isr[ j ].args2, &state );
+                                    }
+                                } 
+                                else if ( pin_isr[ j ].intr_type == GPIO_INTR_ANYEDGE )
+                                {
+                                    pin_isr[ j ].pin_cb( pin_isr[ j ].args, &state );
+                                }
+                            }
+                        }                               
+                    }
+                }
+            }
+        vTaskDelay( 10 / portTICK_PERIOD_MS );
+    }
+    vTaskDelete(NULL);
+}
+
+esp_err_t mcp23017_isr_handler_add(uint8_t pin, gpio_int_type_t intr_type, interrupt_cb cb, void *args, interrupt_cb cb2, void *args2, uint32_t up_delay)
+{
+    if ( cb == NULL ) return ESP_FAIL;
+
+    pin_isr_cnt++;
+    pin_isr = (mcp23017_pin_isr_t *) realloc(pin_isr, pin_isr_cnt * sizeof(mcp23017_pin_isr_t));
+    if ( pin_isr == NULL ) {
+        pin_isr_cnt--;
+        return ESP_FAIL;
+    }
+
+    pin_isr[ pin_isr_cnt-1 ].pin = pin;
+    pin_isr[ pin_isr_cnt-1 ].pin_cb = cb;
+    pin_isr[ pin_isr_cnt-1 ].intr_type = intr_type;
+    pin_isr[ pin_isr_cnt-1 ].args = args;
+
+    pin_isr[ pin_isr_cnt-1 ].pin_cb2 = cb2;
+    pin_isr[ pin_isr_cnt-1 ].args2 = args2;
+
+    pin_isr[ pin_isr_cnt-1 ].up_delay_ms = up_delay;
+
+    return ESP_OK;     
+}
+// *******************************************************************************
+// *********** БЛОК ФУНКЦИЙ ОБРАБОТЧИКОВ НАЖАТИЯ КНОПОК MCP23017 *****************
+// *******************************************************************************
+
+
+void mcp23017_button_isr_cb(uint8_t pin, uint8_t *state)
+{
+    //ESP_LOGI(UTAG, "%s: pin %d, state %d", __func__, pin, *state);
+    GPIO_ALL(pin, !GPIO_ALL_GET(pin));
+}
+
+void mcp23017_pir_sensor_cb(uint8_t pin, uint8_t *state)
+{
+    //ESP_LOGI(UTAG, "%s: pin %d, state %d", __func__, pin, *state);
+
+    GPIO_ALL(pin, *state);
 }
 
 void button1_short_press(void *args, uint8_t *state)
@@ -830,181 +924,28 @@ void button4_press(uint8_t pin, uint8_t *state)
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     last_key_press = millis(); 
 }
+// *******************************************************************************
 
-void startfunc(){
-    // выполняется один раз при старте модуля.
 
-    ESP_LOGI(UTAG, "******************** VERSION = %s ****************", FW_VER);
 
-    if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &work_mode) != ESP_OK ) work_mode = MODE_MANUAL;
-    ESP_LOGW(UTAG, "Loaded work mode = %d", work_mode);
 
-    if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &schedule) != ESP_OK ) schedule = 0;
-    ESP_LOGW(UTAG, "Loaded schedule = %d", schedule);
+void save_params_to_nvs()
+{
+    // записать изменения в nvs
+    uint16_t tmp_val = 0;
+    if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &tmp_val) == ESP_OK ) {
+        if ( tmp_val != work_mode )
+            nvs_param_save_u32(SPACE_NAME, WORK_MODE_PARAM, &work_mode); 
+    }
 
-    uint8_t err = 0;
-    if ( KOTEL1_GPIO == 0 || KOTEL1_GPIO >=255 ) { KOTEL1_GPIO = KOTEL1_GPIO_DEFAULT ; err = 1; }
-    if ( KOTEL2_GPIO == 0 || KOTEL2_GPIO >= 255 ) { KOTEL2_GPIO = KOTEL2_GPIO_DEFAULT ; err = 1; }
-    if ( PUMP1_GPIO == 0 || PUMP1_GPIO >= 255 ) { PUMP1_GPIO = PUMP1_GPIO_DEFAULT ; err = 1; }
-    if ( PUMP2_GPIO == 0 || PUMP2_GPIO >= 255 ) { PUMP2_GPIO = PUMP2_GPIO_DEFAULT ; err = 1; }
-    if ( ESC_GPIO == 0 || ESC_GPIO >= 255 ) { ESC_GPIO = ESC_GPIO_DEFAULT ; err = 1; }
-    if ( VENT_GPIO == 0 || VENT_GPIO >= 255 ) { VENT_GPIO = VENT_GPIO_DEFAULT ; err = 1; }
-
-    if ( NIGHT_TIME >= 23 ) { NIGHT_TIME = NIGHT_TIME_DEFAULT ; err = 1; }
-    if ( DAY_TIME >= 23 ) { DAY_TIME = DAY_TIME_DEFAULT ; err = 1; }
-
-    if ( KOTEL1_LED_GPIO == 0 || KOTEL1_LED_GPIO >= 255 ) { KOTEL1_LED_GPIO = 255 ; err = 1; }
-    if ( KOTEL2_LED_GPIO == 0 || KOTEL2_LED_GPIO >= 255 ) { KOTEL2_LED_GPIO = 255 ; err = 1; }
-    if ( KOTEL_LED_GPIO == 0 || KOTEL_LED_GPIO >= 255 ) { KOTEL_LED_GPIO = 255 ; err = 1; }
-    if ( PUMP_LED_GPIO == 0 || PUMP_LED_GPIO >= 255 ) { PUMP_LED_GPIO = 255 ; err = 1; }
-    if ( SCHEDULE_LED_GPIO == 0 || SCHEDULE_LED_GPIO >= 255 ) { SCHEDULE_LED_GPIO = 255 ; err = 1; }
-    if ( VENT_LED_GPIO == 0 || VENT_LED_GPIO >= 255 ) { VENT_LED_GPIO = 255 ; err = 1; }
-
-    if ( TEMPSET < 100 || TEMPSET > 300 ) { TEMPSET = 240 ; err = 1; }
-
-    if ( err == 1 ) SAVEOPT;
-
-    // установить прерывания пинов
-    //MCPwrite_reg16(0, GPINTENA, MCP23017_GPIO0 | MCP23017_GPIO1 | MCP23017_GPIO2 | MCP23017_GPIO3 | MCP23017_GPIO4 | MCP23017_GPIO5); // 0b0000111000000000
-    //uint16_t inout = MCPread_reg16(0, IODIRA);
-    //ESP_LOGI(UTAG, "%s: MCP23017 directions: " BYTE_TO_BINARY_PATTERN BYTE_TO_BINARY_PATTERN, __func__ , BYTE_TO_BINARY(inout >> 8), BYTE_TO_BINARY(inout));
-
-    MCPwrite_reg16(0, GPINTENA, 0b1111111111111111); // 0b0000111000000000
-    //MCPwrite_reg16(0, GPINTENA, inout); // 0b0000111000000000
-
-    // условия сработки прерывания на ногах
-    MCPwrite_reg16(0, INTCONA, 0);  // при нулях
-
-    // дефолтные значения ног, прерывание сработает, если на ноге сигнал отличается от дефолтного, если на пинах значение отличается от  заданного ниже (DEFVAL  = 1 )
-    MCPwrite_reg16(0, DEFVALA, 0b1111111111111111);    
-
-    // инвертируем 13 пин
-    //MCPwrite_reg16(0, IPOLA, 0b0001000100000000); // 0b0000111000000000
-
-    // установить прерывания на GPIO
-        // configure interrupts 
-    gpio_config_t gpio_conf;
-    gpio_conf.intr_type = GPIO_INTR_NEGEDGE; //GPIO_INTR_NEGEDGE; //GPIO_INTR_POSEDGE; // GPIO_INTR_ANYEDGE;           
-    gpio_conf.mode = GPIO_MODE_INPUT;
-    gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    gpio_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_conf.pin_bit_mask = (1ULL << MCP23017_INTA_PIN);
-    gpio_config(&gpio_conf);    
-    gpio_install_isr_service(0);
-
-    // прерывание на кнопки mcp23017
-    gpio_isr_handler_add( MCP23017_INTA_PIN, mcp23017_isr_handler, NULL);  
-
-        // 1 - сразу при нажатии         GPIO_INTR_POSEDGE 
-        // 2 - только после отпускания   GPIO_INTR_NEGEDGE 
-        // 3 - любое состояние           GPIO_INTR_ANYEDGE 
-        // или наоборот, зависит от дефолтного состояния пина 1 = 1 или 0 = 2
-    mcp23017_isr_handler_add( 0, GPIO_INTR_POSEDGE, button1_short_press, NULL,          button1_long_press,     NULL, 800);
-    mcp23017_isr_handler_add( 1, GPIO_INTR_POSEDGE, button2_short_press, KOTEL1_GPIO,   button2_long_press,     KOTEL1_GPIO, 800);
-    mcp23017_isr_handler_add( 2, GPIO_INTR_POSEDGE, button3_short_press, KOTEL2_GPIO,   button3_long_press,     KOTEL2_GPIO, 800);
-    mcp23017_isr_handler_add( 3, GPIO_INTR_POSEDGE, button4_press, VENT_GPIO,     button4_press,     ESC_GPIO, 500);
-
-    // датчик движения
-    //mcp23017_isr_handler_add( 4, GPIO_INTR_ANYEDGE, mcp23017_pir_sensor_cb, 212, NULL, NULL, 0);
-    
-    // датчик геркон
-    //mcp23017_isr_handler_add( 5, GPIO_INTR_ANYEDGE, mcp23017_pir_sensor_cb, 213, NULL, NULL, 0);
-
-    //mcp23017_isr_handler_add( 5, GPIO_INTR_ANYEDGE, mcp23017_pir_sensor_cb, 199, NULL, NULL, 0); // display backlight
-
-    mcp23017_queue = xQueueCreate(5, sizeof(uint16_t) * 2);
-    xTaskCreate( mcp23017_isr_cb, "mcp23017_isr", 1024, NULL, 10, &mcp23017_task);
-
-    set_active_kotel( work_mode );
-
-    // выключить подсветку черех Х сек
-    turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
+    if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &tmp_val) == ESP_OK ) {
+        if ( tmp_val != schedule )
+            nvs_param_save_u32(SPACE_NAME, SCHEDULE_PARAM, &schedule); 
+    }
 }
 
-void timerfunc(uint32_t  timersrc) {
-    // выполнение кода каждую 1 секунду
-    if ( timersrc % 10 == 0 ) {
-        // записать изменения в nvs
-        uint16_t tmp_val = 0;
-        if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &tmp_val) == ESP_OK ) {
-            if ( tmp_val != work_mode )
-                nvs_param_save(SPACE_NAME, WORK_MODE_PARAM, &work_mode, sizeof(work_mode)); 
-        }
-
-        if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &tmp_val) == ESP_OK ) {
-            if ( tmp_val != schedule )
-                nvs_param_save(SPACE_NAME, SCHEDULE_PARAM, &schedule, sizeof(schedule)); 
-        }
-    }
-
-    if ( timersrc % 30 == 0 ) {
-        // выполнение кода каждые 30 секунд
-        set_active_kotel(work_mode); 
-    }
-
-    if ( menu_idx != MENU_PAGE_MAIN && ( millis() - last_key_press >= MENU_EXIT_TIMEOUT )) 
-    {
-        menu_idx = MENU_PAGE_MAIN;
-    }
-
-    // управление уставками по расписанию
-    if ( timersrc % 30 == 0 && schedule ) {
-        // проверить день недели
-
-        // цикл по элементам
-        // текущее время сравнить с установленным, 
-        // если текущее меньше больше установленного, то взять текущую уставку
-        // и так пройтись до конца расписания, перезаписывая уставку в термостаты
-        // если не нашлось ни одной уставки в расписании, то выставить глобальную уставку
-        // #maxscher - переменная прошивки, кол-во расписаний 
-
-        uint16_t local_tempset = TEMPSET;  // по дефолту из глобальной уставки возьмем
-
-        for ( uint8_t si = 0; si < maxscher; si++)
-        {
-            // проверяем день недели
-            if ( BIT_CHECK( sensors_param.schweek[si], time_loc.dow ) ) 
-            {
-                // день недели включен в шедулере
-                // теперь сравним время
-                uint16_t sched_t = sensors_param.scheduler[si][1]*60 + sensors_param.scheduler[si][2];
-                uint16_t loc_t = time_loc.hour * 60 + time_loc.min;
-                
-                if ( loc_t  >= sched_t ) 
-                {
-                    local_tempset = sensors_param.scheduler[si][3];
-                } 
-
-            }
-        }
-
-        shed_tempset = local_tempset;
-        THERMO_TEMP_SET(1, local_tempset);
-        THERMO_TEMP_SET(2, local_tempset);  
-    }
-
-    show_page( menu_idx );
-
-    // управление термостатами воды
-    if ( GPIO_ALL_GET(KOTEL1_GPIO) == 1 ) {
-        // котел включен, включим термостат воды 
-       THERMO_ON(3);
-    } else {
-        // котел выключили, ждем понижения температуры обратки
-        // т.е отключения реле насоса и выключаем термостат воды
-        if ( GPIO_ALL_GET(PUMP1_GPIO) == 0 || GPIO_ALL_GET(KOTEL2_GPIO) == 1) THERMO_OFF(3);
-    }
-
-    if ( GPIO_ALL_GET(KOTEL2_GPIO) == 1 ) {
-        // котел включили
-       THERMO_ON(4);
-    } else {
-        // котел выключили, ждем понижения температуры обратки
-        // или отключения реле насоса и выключаем термостат воды
-        if ( GPIO_ALL_GET(PUMP2_GPIO) == 0 || GPIO_ALL_GET(KOTEL1_GPIO) == 1) THERMO_OFF(4);
-    }    
-
-
+void control_indications()
+{
     // индикации 
     
     if ( work_mode != MODE_MANUAL )
@@ -1019,15 +960,6 @@ void timerfunc(uint32_t  timersrc) {
         GPIO_ALL( KOTEL1_LED_GPIO, GPIO_ALL_GET( KOTEL1_GPIO ) );
         GPIO_ALL( KOTEL2_LED_GPIO, GPIO_ALL_GET( KOTEL2_GPIO ) );
     }
-    
-
-
-
-    // вентиляция
-    GPIO_ALL( VENT_LED_GPIO, GPIO_ALL_GET( VENT_GPIO ) );
-
-    // расписание
-    GPIO_ALL( SCHEDULE_LED_GPIO, schedule );
 
     // индикация работы реле котлов, подсвечиваем, если хотя бы одно реле включено
     if ( GPIO_ALL_GET( KOTEL1_GPIO) == 0 && GPIO_ALL_GET( KOTEL2_GPIO ) == 0)
@@ -1041,14 +973,10 @@ void timerfunc(uint32_t  timersrc) {
     else
         GPIO_ALL( PUMP_LED_GPIO, 1 );
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 
-void webfunc(char *pbuf) 
+void webfunc_print_kotel_data(char *pbuf)
 {
-
-
-   //********************************************************************************************
     os_sprintf(HTTPBUFF,"<table><tr><td>Mode:</td><td>");
  
     #define html_button_mode "<a href='#' onclick='wm(%d)'><div class='g_%d k kk fll wm' id='v%d'>%s</div></a>"
@@ -1074,9 +1002,10 @@ void webfunc(char *pbuf)
     }
     
     os_sprintf(HTTPBUFF,"</table>");
-    os_sprintf(HTTPBUFF,"<small>Version: %s</small>", FW_VER); 
+}
 
-    // SCRIPT
+void webfunc_print_script(char *pbuf)
+{
     os_sprintf(HTTPBUFF, "<script type='text/javascript'>"
 
 
@@ -1120,9 +1049,387 @@ void webfunc(char *pbuf)
                     , VALDES_INDEX_WORK_MODE
                     , VALDES_INDEX_SCHEDULE 
     );  
- 
+}
+
+
+//*****************************************************************************************************************
+//*****************  БЛОК ПЕРЕМЕННЫХ И ФУНКЦИЙ ДЛЯ УЧЕТА РАСХОДА ДИЗЕЛЯ *******************************************
+//*****************************************************************************************************************
+#define FUEL_PUMP_GPIO	13
+#define CONSUMP_ML_SEC 0.55f
+#define CONSUMP_L_SEC 0.00055f
+#define COUNTER_THRESHOLD 30    // задать через cfgdes
+
+uint16_t fpump_state = 0;
+uint32_t fpump_start_dt = 0;
+uint16_t fpump_on_cnt = 0;
+uint32_t fpump_on_duration = 0;
+uint32_t fpump_on_duration_prev = 0;
+//время работы
+uint32_t fpump_work_time = 0;             // время работы за все время
+uint32_t fpump_today_time = 0;          // время работы за сегодня
+uint32_t fpump_prev_time = 0;           // время работы за вчера
+// расходы
+uint32_t i_fuel_consump_now;                    // текущий расход
+uint32_t i_fuel_consump_today;                    // расход за сегодня
+uint32_t i_fuel_consump_prev;                       // расход за вчера
+uint32_t i_fuel_consump_total;                  // расход за все время
+
+// NVS FUEL PUMP
+#define SPACE_FUEL_PUMP "fuelpump"
+#define FUEL_CONSUMP_LAST_PARAM "conslast"      // расход за последнее включение
+#define FUEL_CONSUMP_DAY_PARAM "consday"        // расход за день
+#define FUEL_CONSUMP_PREV_PARAM "consprev"      // расход за вчера
+#define FUEL_CONSUMP_TOTAL_PARAM "consttl"      // расход общий
+
+#define FUEL_WORKTIME_LAST_PARAM "wrktlast"     // последняя длительность работы
+#define FUEL_WORKTIME_DAY_PARAM "wrktday"       // длительность работы сегодня
+#define FUEL_WORKTIME_PREV_PARAM "wrktprev"     // длительность работы вчера
+#define FUEL_WORKTIME_TOTAL_PARAM "wrktttl"     // длительность работы общая
+
+uint32_t get_consump_total()
+{
+	return 	i_fuel_consump_total / 100;
+}
+
+uint32_t get_consump_today()
+{
+	return 	i_fuel_consump_today / 100;
+}
+
+uint32_t get_consump_prev()
+{
+	return 	i_fuel_consump_prev / 100;
+}
+
+void detect_fuel_pump_work()
+{
+    #ifdef count60e     // on/off option
+        fpump_state = ( count60end[0] > COUNTER_THRESHOLD );  // если просто > 0? то проскакивают левые импульсы
+
+        static uint16_t fpump_state_prev = 0;
+        if ( fpump_state != fpump_state_prev ) {
+            // состояние изменилось
+            // TODO: отправить по mqtt немедленно
+            // TODO: включить индикацию, если надо
+            fpump_state_prev = fpump_state;
+
+            if ( fpump_state ) {
+                // переключился из 0 в 1  (!!! может проскакивать импульс и поэтому cnt увеличивается на 1 и предыдущее время обнуляется, регулируется отсечкой подсчета импульсов)
+                fpump_on_cnt++;
+                fpump_start_dt = millis();  // при включении начали отсчет
+                i_fuel_consump_now = 0;     // обнуление текущего расхода                
+            } else {
+                // переключился из 1 в 0
+
+                // сохраним результаты подсчета в nvs
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
+                nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);
+               
+                i_fuel_consump_now = 0;
+                fpump_on_duration_prev = fpump_on_duration;
+                fpump_on_duration = 0;
+		    }
+        }
+    #endif
+}
+
+void fuel_consumption_calc()
+{
+    #ifdef count60e     // on/off option
+
+        if ( time_loc.hour == 0 && time_loc.min == 0 && time_loc.sec == 0 )
+        {
+            // обнулить суточные данные ночью
+            fpump_prev_time = fpump_today_time;
+            fpump_today_time = 0;
+            i_fuel_consump_prev = i_fuel_consump_today;
+            i_fuel_consump_today = 0;
+            fpump_on_cnt = 0;
+
+            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
+            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
+            
+            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
+            nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
+        } 
+
+        if ( fpump_state ) {
+            // топливный насос включен, увеличиваем расходы
+            fpump_work_time++;  // увеличиваем время работы за все время
+            fpump_today_time++; // увеличиваем время работы за сегодня
+            i_fuel_consump_total++; // увеличиваем время работы за все время
+            i_fuel_consump_now += CONSUMP_L_SEC*100000; // увеличиваем счетчик текущего расхода
+            i_fuel_consump_today += CONSUMP_L_SEC*100000; // увеличиваем счетчик расходня за сегодня
+            fpump_on_duration = millis() - fpump_start_dt;	// считаем время
+        }    
+    #endif
+}
+
+void fuel_reset_data()
+{
+    i_fuel_consump_now = 0;
+    i_fuel_consump_total = 0;
+    i_fuel_consump_today = 0;
+    i_fuel_consump_prev = 0;
+    
+    fpump_on_duration = 0;
+    fpump_work_time = 0;
+    fpump_today_time = 0;
+    fpump_prev_time = 0;
+    fpump_on_cnt = 0;   
+
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);     
+}
+
+void fuel_save_data()
+{
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
+    nvs_param_save_u32(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);
+}
+
+void fuel_load_data()
+{
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_LAST_PARAM, &i_fuel_consump_now);
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_DAY_PARAM, &i_fuel_consump_today);
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_PREV_PARAM, &i_fuel_consump_prev);
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_CONSUMP_TOTAL_PARAM, &i_fuel_consump_total);
+
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_DAY_PARAM, &fpump_today_time);
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_LAST_PARAM, &fpump_on_duration_prev);
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_PREV_PARAM, &i_fuel_consump_prev);
+    nvs_param_load(SPACE_FUEL_PUMP, FUEL_WORKTIME_TOTAL_PARAM, &fpump_work_time);
+}
+
+void webfunc_print_fuel_pump_data(char *pbuf)
+{
+	os_sprintf(HTTPBUFF, "<hr>");
+	os_sprintf(HTTPBUFF, "<b>Fuel Pump:</b> %s &nbsp; <b>count:</b> %d <br>", fpump_state ? "ON" : "OFF", fpump_on_cnt );
+	os_sprintf(HTTPBUFF, "<b>PrevDuration:</b> %d:%02d <br>", (fpump_on_duration_prev / 1000) / 60,  (fpump_on_duration_prev / 1000) % 60);
+   
+	uint32_t sec = fpump_work_time % 60;
+	uint32_t min = fpump_work_time / 60;
+	uint32_t hour = (min / 60 % 24);
+	min = min % 60;
+
+	os_sprintf(HTTPBUFF, "<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>"
+							"<tr align='center'>"
+								"<th></th><th>Work time:</th><th>Consumption, L:</th>"
+							"</tr>"
+				);
+				
+
+	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
+								"<td><b>Now:</b></td><td>%02d:%02d</td><td>%d.%03d</td>"
+							"</tr>"
+							, (fpump_on_duration / 1000) / 60,  (fpump_on_duration / 1000) % 60
+							, i_fuel_consump_now / 100000, (i_fuel_consump_now % 100000) / 100
+	);	
+
+	uint32_t _sec = fpump_today_time % 60;
+	uint32_t _min = fpump_today_time / 60;
+	uint32_t _hour = _min / 60;
+	_min = _min % 60;
+
+	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
+								"<td><b>Today:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
+							"</tr>"
+							, _hour, _min, _sec
+							, i_fuel_consump_today / 100000, (i_fuel_consump_today % 100000) / 100
+	);
+
+
+	_sec = fpump_prev_time % 60;
+	_min = fpump_prev_time / 60;
+	_hour = _min / 60;
+	_min = _min % 60;
+
+	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
+								"<td><b>Yesterday:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
+							"</tr>"
+							, _hour, _min, _sec
+							, i_fuel_consump_prev / 100000, (i_fuel_consump_prev % 100000) / 100
+	);
+
+	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
+								"<td><b>Total:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
+							"</tr>"
+							, hour, min, sec
+							, i_fuel_consump_total / 100000, (i_fuel_consump_total % 100000) / 100
+	);	
+
+	os_sprintf(HTTPBUFF, 	"</table>");        
+}
+//*****************************************************************************************************************
+//****************** основные функции прошивки ********************************************************************
+//*****************************************************************************************************************
+
+#define ADDLISTSENS {200,LSENSFL0,"WorkMode","workmode",&WORKMODE,NULL}, \
+                    {201,LSENSFL1,"Temperature","temp",&current_temp,NULL}, \
+                    {202,LSENSFL0,"Schedule","schedule",&schedule,NULL}, \
+                    {203,LSENSFL0,"TempSet","tempset",&TEMPSET,NULL}, \
+                    {204,LSENSFL0,"FuelPump","fuelpump",&fpump_state,NULL}, \
+                    {205,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRate",  "fuelrate",     get_consump_total,NULL}, \
+					{206,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRateT", "fuelratet",    get_consump_today,NULL}, \
+					{207,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRateY", "fuelratey",    get_consump_prev,NULL}, \
+					{208,LSENSFL0|LSENS32BIT,"FuelTime","fueltime",     &fpump_work_time,NULL}, \
+					{209,LSENSFL0|LSENS32BIT,"FuelTimeT","fueltimet",   &fpump_today_time,NULL}, \
+					{210,LSENSFL0|LSENS32BIT,"FuelTimeY","fueltimey",   &fpump_prev_time,NULL}, \
+					{211,LSENSFL0,"FuelOnCnt","foncnt",&fpump_on_cnt,NULL}, \
+					{212,LSENSFL0|LSENS32BIT,"FuelOnDur","fondur",&fpump_on_duration_prev,NULL}, 
+
+
+void startfunc(){
+    // выполняется один раз при старте модуля.
+
+    ESP_LOGI(UTAG, "******************** VERSION = %s ****************", FW_VER);
+
+    if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &work_mode) != ESP_OK ) work_mode = MODE_MANUAL;
+    ESP_LOGW(UTAG, "Loaded work mode = %d", work_mode);
+
+    if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &schedule) != ESP_OK ) schedule = 0;
+    ESP_LOGW(UTAG, "Loaded schedule = %d", schedule);
+
+    uint8_t err = 0;
+    if ( KOTEL1_GPIO == 0 || KOTEL1_GPIO >=255 ) { KOTEL1_GPIO = KOTEL1_GPIO_DEFAULT ; err = 1; }
+    if ( KOTEL2_GPIO == 0 || KOTEL2_GPIO >= 255 ) { KOTEL2_GPIO = KOTEL2_GPIO_DEFAULT ; err = 1; }
+    if ( PUMP1_GPIO == 0 || PUMP1_GPIO >= 255 ) { PUMP1_GPIO = PUMP1_GPIO_DEFAULT ; err = 1; }
+    if ( PUMP2_GPIO == 0 || PUMP2_GPIO >= 255 ) { PUMP2_GPIO = PUMP2_GPIO_DEFAULT ; err = 1; }
+    if ( ESC_GPIO == 0 || ESC_GPIO >= 255 ) { ESC_GPIO = ESC_GPIO_DEFAULT ; err = 1; }
+    if ( VENT_GPIO == 0 || VENT_GPIO >= 255 ) { VENT_GPIO = VENT_GPIO_DEFAULT ; err = 1; }
+
+    if ( NIGHT_TIME >= 23 ) { NIGHT_TIME = NIGHT_TIME_DEFAULT ; err = 1; }
+    if ( DAY_TIME >= 23 ) { DAY_TIME = DAY_TIME_DEFAULT ; err = 1; }
+
+    if ( KOTEL1_LED_GPIO == 0 || KOTEL1_LED_GPIO >= 255 ) { KOTEL1_LED_GPIO = 255 ; err = 1; }
+    if ( KOTEL2_LED_GPIO == 0 || KOTEL2_LED_GPIO >= 255 ) { KOTEL2_LED_GPIO = 255 ; err = 1; }
+    if ( KOTEL_LED_GPIO == 0 || KOTEL_LED_GPIO >= 255 ) { KOTEL_LED_GPIO = 255 ; err = 1; }
+    if ( PUMP_LED_GPIO == 0 || PUMP_LED_GPIO >= 255 ) { PUMP_LED_GPIO = 255 ; err = 1; }
+    if ( SCHEDULE_LED_GPIO == 0 || SCHEDULE_LED_GPIO >= 255 ) { SCHEDULE_LED_GPIO = 255 ; err = 1; }
+    if ( VENT_LED_GPIO == 0 || VENT_LED_GPIO >= 255 ) { VENT_LED_GPIO = 255 ; err = 1; }
+
+    if ( TEMPSET < 100 || TEMPSET > 300 ) { TEMPSET = 240 ; err = 1; }
+
+    if ( err == 1 ) SAVEOPT;
+
+    // установить прерывания пинов
+    MCPwrite_reg16(0, GPINTENA, 0b1111111111111111); // 0b0000111000000000
+
+    // условия сработки прерывания на ногах
+    MCPwrite_reg16(0, INTCONA, 0);  // при нулях
+
+    // дефолтные значения ног, прерывание сработает, если на ноге сигнал отличается от дефолтного, если на пинах значение отличается от  заданного ниже (DEFVAL  = 1 )
+    MCPwrite_reg16(0, DEFVALA, 0b1111111111111111);    
+
+    // установить прерывания на GPIO
+    gpio_config_t gpio_conf;
+    gpio_conf.intr_type = GPIO_INTR_NEGEDGE; //GPIO_INTR_NEGEDGE; //GPIO_INTR_POSEDGE; // GPIO_INTR_ANYEDGE;           
+    gpio_conf.mode = GPIO_MODE_INPUT;
+    gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    gpio_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_conf.pin_bit_mask = (1ULL << MCP23017_INTA_PIN);
+    gpio_config(&gpio_conf);    
+    gpio_install_isr_service(0);
+
+    // прерывание на кнопки mcp23017
+    gpio_isr_handler_add( MCP23017_INTA_PIN, mcp23017_isr_handler, NULL);  
+
+        // 1 - сразу при нажатии         GPIO_INTR_POSEDGE 
+        // 2 - только после отпускания   GPIO_INTR_NEGEDGE 
+        // 3 - любое состояние           GPIO_INTR_ANYEDGE 
+        // или наоборот, зависит от дефолтного состояния пина 1 = 1 или 0 = 2
+    mcp23017_isr_handler_add( 0, GPIO_INTR_POSEDGE, button1_short_press, NULL,          button1_long_press,     NULL, 800);
+    mcp23017_isr_handler_add( 1, GPIO_INTR_POSEDGE, button2_short_press, KOTEL1_GPIO,   button2_long_press,     KOTEL1_GPIO, 800);
+    mcp23017_isr_handler_add( 2, GPIO_INTR_POSEDGE, button3_short_press, KOTEL2_GPIO,   button3_long_press,     KOTEL2_GPIO, 800);
+    mcp23017_isr_handler_add( 3, GPIO_INTR_POSEDGE, button4_press, VENT_GPIO,     button4_press,     ESC_GPIO, 500);
+
+    mcp23017_queue = xQueueCreate(5, sizeof(uint16_t) * 2);
+    xTaskCreate( mcp23017_isr_cb, "mcp23017_isr", 1024, NULL, 10, &mcp23017_task);
+
+    set_active_kotel( work_mode );
+
+    // выключить подсветку черех Х сек
+    turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
+
+    // читаем сохраненные данные по топливному насосу
+    fuel_load_data();
+}
+
+void timerfunc(uint32_t  timersrc) {
+    // выполнение кода каждую 1 секунду
+
+    if ( timersrc % 10 == 0 ) {
+        save_params_to_nvs();
+    }
+
+    if ( timersrc % 30 == 0 ) {
+        // выполнение кода каждые 30 секунд
+        set_active_kotel(work_mode); 
+    }
+
+    if ( menu_idx != MENU_PAGE_MAIN && ( millis() - last_key_press >= MENU_EXIT_TIMEOUT )) 
+    {
+        menu_idx = MENU_PAGE_MAIN;
+    }
+
+    // управление уставками по расписанию
+    if ( timersrc % 30 == 0 ) {
+        set_tempset_by_schedule(schedule); 
+    }
+
+    show_page( menu_idx );
+    control_return_water_thermostats();
+    
+    // вентиляция
+    GPIO_ALL( VENT_LED_GPIO, GPIO_ALL_GET( VENT_GPIO ) );
+
+    // расписание
+    GPIO_ALL( SCHEDULE_LED_GPIO, schedule );
+
+    control_indications();
+
+    // работа с топливным насосом
+    detect_fuel_pump_work();
+    fuel_consumption_calc();
+    
+    if ( timersrc % 1800 ) {  // каждые 30 мин
+        fuel_save_data();
+    }
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
 
 
 
-  
+
+void webfunc(char *pbuf) 
+{
+    webfunc_print_kotel_data(pbuf);
+
+    // SCRIPT
+    webfunc_print_script(pbuf);
+
+    webfunc_print_fuel_pump_data(pbuf);
+
+    os_sprintf(HTTPBUFF,"<small>Version: %s</small>", FW_VER); 
 }
