@@ -261,6 +261,12 @@ esp_err_t nvs_param_save_u32(const char* space_name, const char* key, uint32_t *
 
 TimerHandle_t  buzzer_timer;
 
+
+typedef struct {
+    uint16_t action;    // 0 - off, 1 - on
+    uint16_t delay; //msec 
+} buzzer_beep_t;
+
 char** str_split(char* a_str, const char a_delim, int *cnt)
 {
     char** result    = 0;
@@ -301,10 +307,13 @@ void buzzer(const char *pattern)
     ESP_LOGI(UTAG, "%s: pattern = %s", __func__, pattern);
     char** beeps;
     int count = 0;
+    buzzer_beep_t *buzzer_beeps;
+
     char *str = strdup(pattern);
     beeps = str_split(str, ';', &count);
     if (beeps)
     {
+        buzzer_beeps = malloc( count * sizeof(buzzer_beep_t) );
         int i;
         for (i = 0; *(beeps + i); i++)
         {
@@ -312,16 +321,20 @@ void buzzer(const char *pattern)
             if ( s1 != NULL ) {
                 char t[5] = "";
                 strncpy(t,*(beeps + i),s1-*(beeps + i));
-                uint8_t action = atoi(t);
-
+                buzzer_beeps[i].action = atoi(t);
                 strcpy(t,*(beeps + i) + 2);
-                uint16_t _delay = atoi(t);
-
-                GPIO_ALL( BUZZER_GPIO, action);
-                vTaskDelay( _delay / portTICK_PERIOD_MS );
+                buzzer_beeps[i].delay = atoi(t);
             }
             free(*(beeps + i));
         }
+
+        for (i = 0; i < count; i++)
+        {
+            ESP_LOGI(UTAG, "buzzer %d, action %d, delay %d", i, buzzer_beeps[i].action, buzzer_beeps[i].delay);
+            GPIO_ALL( BUZZER_GPIO, buzzer_beeps[i].action);
+            vTaskDelay( buzzer_beeps[i].delay / portTICK_PERIOD_MS );
+        }
+        free(buzzer_beeps);
         free(beeps);
     }
 
@@ -335,14 +348,10 @@ void buzzer_cb(xTimerHandle tmr)   // rtos
     char *data = (char *)pvTimerGetTimerID(tmr);
     buzzer( data );
     xTimerStop( buzzer_timer, 0);
-    xTimerDelete(buzzer_timer, 10);
-    buzzer_timer = NULL;
+    //xTimerDelete(buzzer_timer, 10);
+    //buzzer_timer = NULL;
 }
 
-typedef struct {
-    uint16_t action;    // 0 - off, 1 - on
-    uint16_t delay; //msec 
-} buzzer_beep_t;
 
 
 
