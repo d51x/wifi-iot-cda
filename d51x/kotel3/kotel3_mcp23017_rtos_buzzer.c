@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.59"
+#define FW_VER "3.60"
 
 
 /*
@@ -257,9 +257,6 @@ esp_err_t nvs_param_save_u32(const char* space_name, const char* key, uint32_t *
 // ******************************************************************************
 //#define BUZZER_GPIO 16
 
-#define buzzer1_data sensors_param.strrep[0] 
-#define buzzer2_data sensors_param.strrep[1] 
-
 typedef enum {
     BUZZER_BEEP_SHORT_EXTRA,
     BUZZER_BEEP_SHORT_VERY,
@@ -296,15 +293,15 @@ buzzer_beep_t beeps[BUZZER_BEEP_MAX][BEEP_COMMAND_LENGTH] =
 
 
 
-void buzzer_beep(buzzer_beep_t *pattern)
+void buzzer_beep(uint8_t pattern)
 {
     GPIO_ALL( BUZZER_GPIO, 0);
     for (uint8_t i = 0; i < BEEP_COMMAND_LENGTH; i++)
     {
         //ESP_LOGI(UTAG, "buzzer %d, action %d, delay %d", i, pattern[i].action, pattern[i].delay);
-        GPIO_ALL( BUZZER_GPIO, pattern[i].action);
-        if (pattern[i].delay > 0 )
-            vTaskDelay( pattern[i].delay / portTICK_PERIOD_MS );
+        GPIO_ALL( BUZZER_GPIO, beeps[pattern][i].action);
+        if (beeps[pattern][i].delay > 0 )
+            vTaskDelay( beeps[pattern][i].delay / portTICK_PERIOD_MS );
     }
     GPIO_ALL( BUZZER_GPIO, 0);
 }
@@ -312,7 +309,7 @@ void buzzer_beep(buzzer_beep_t *pattern)
 static void buzzer_cb(void *arg) {
 	while (1) {
 
-            buzzer_beep_t *pattern;
+            uint8_t pattern;
             if ( xQueueReceive(buzzer_queue, &pattern, 0) == pdPASS) 
             {
                 buzzer_beep(pattern);
@@ -322,12 +319,12 @@ static void buzzer_cb(void *arg) {
     vTaskDelete(NULL);
 }
 
-void buzzer(buzzer_beep_t *pattern)   // str_idx номер строки конструктора строк, с 0 начинается
+void buzzer(uint8_t pattern)   // str_idx номер строки конструктора строк, с 0 начинается
 {
     if ( BUZZER_GPIO == 255 ) return;
 
     GPIO_ALL( BUZZER_GPIO, 0);
-    xQueueOverwrite(buzzer_queue, ( buzzer_beep_t * )&pattern);
+    xQueueOverwrite(buzzer_queue, ( void * )&pattern);
   
 }
 
@@ -952,7 +949,7 @@ void button1_short_press(void *args, uint8_t *state)
     change_work_mode();
     last_key_press = millis();  
 
-    buzzer(&beeps[BUZZER_BEEP_DOUBLE_SHORT]);
+    buzzer( BUZZER_BEEP_SHORT );
 }
 
 void button1_long_press(void *args, uint8_t *state)
@@ -961,6 +958,7 @@ void button1_long_press(void *args, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     switch_schedule();
     last_key_press = millis();
+    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
 }
 
 void button2_short_press(uint8_t pin, uint8_t *state)
@@ -970,8 +968,10 @@ void button2_short_press(uint8_t pin, uint8_t *state)
     if ( backlight == 0 && sensors_param.lcden > 0) return;
     if ( schedule ) {
         show_display_error("Schedule is enabled. Can't change temperature setpiont!");
+        buzzer( BUZZER_BEEP_DOUBLE_SHORT );
     } else {
         tempset_dec();
+        buzzer( BUZZER_BEEP_SHORT );
     }
     last_key_press = millis();
 }
@@ -990,6 +990,8 @@ void button2_long_press(uint8_t pin, uint8_t *state)
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
  
     last_key_press = millis();
+
+    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
 }
 
 void button3_short_press(uint8_t pin, uint8_t *state)
@@ -1003,6 +1005,8 @@ void button3_short_press(uint8_t pin, uint8_t *state)
         tempset_inc();
     }
     last_key_press = millis();
+
+    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
 }
 
 void button3_long_press(uint8_t pin, uint8_t *state)
@@ -1016,6 +1020,8 @@ void button3_long_press(uint8_t pin, uint8_t *state)
     }
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     last_key_press = millis();
+
+    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
 }
 
 void button4_press(uint8_t pin, uint8_t *state)
@@ -1023,7 +1029,7 @@ void button4_press(uint8_t pin, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     last_key_press = millis(); 
-    buzzer(&beeps[BUZZER_BEEP_LONG_EXTRA]);
+    buzzer( BUZZER_BEEP_SHORT );
 }
 // *******************************************************************************
 
