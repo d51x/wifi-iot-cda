@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.64"
+#define FW_VER "3.66"
 
 
 /*
@@ -655,6 +655,8 @@ void switch_schedule()
 
 }
 
+int8_t schedule_id;
+
 void set_tempset_by_schedule(uint8_t _schedule)
 {
     if ( !_schedule ) return;
@@ -669,7 +671,8 @@ void set_tempset_by_schedule(uint8_t _schedule)
     // #maxscher - переменная прошивки, кол-во расписаний 
 
     uint16_t local_tempset = TEMPSET;  // по дефолту из глобальной уставки возьмем
-
+    
+    schedule_id = -1;
     for ( uint8_t si = 0; si < maxscher; si++)
     {
         // проверяем день недели
@@ -683,6 +686,7 @@ void set_tempset_by_schedule(uint8_t _schedule)
             if ( loc_t  >= sched_t ) 
             {
                 local_tempset = sensors_param.scheduler[si][3];
+                schedule_id = si;
             } 
 
         }
@@ -1153,7 +1157,24 @@ void webfunc_print_kotel_data(char *pbuf)
     os_sprintf(HTTPBUFF,"</td></tr>");
     os_sprintf(HTTPBUFF,"<tr><td>Temperature:</td><td><b>%d.%d °C</b></td></tr>", current_temp / 10, current_temp % 10); 
     if ( schedule ) {
-        os_sprintf(HTTPBUFF,"<tr><td>Schedule tempset:</td><td><b>%d.%d °C</b></td></tr>", shed_tempset / 10, shed_tempset % 10);     
+        char weeks[32] = ""; //"#1 hh:mm Mo,Tu,We,Th,Fr,Sa,Su"
+        if ( schedule_id > -1 && schedule_id < maxscher )
+        {
+            sprintf(weeks, " #%d %02d:%02d %s%s%s%s%s%s%s"
+                , schedule_id+1 
+                , sensors_param.scheduler[schedule_id][1]
+                , sensors_param.scheduler[schedule_id][2]
+                , BIT_CHECK( sensors_param.schweek[schedule_id], 0 ) ? "Mo " : ""
+                , BIT_CHECK( sensors_param.schweek[schedule_id], 1 ) ? "Tu " : ""
+                , BIT_CHECK( sensors_param.schweek[schedule_id], 2 ) ? "We " : ""
+                , BIT_CHECK( sensors_param.schweek[schedule_id], 3 ) ? "Th " : ""
+                , BIT_CHECK( sensors_param.schweek[schedule_id], 4 ) ? "Fr " : ""
+                , BIT_CHECK( sensors_param.schweek[schedule_id], 5 ) ? "Sa " : ""
+                , BIT_CHECK( sensors_param.schweek[schedule_id], 6 ) ? "Su " : ""
+            );
+        }
+        os_sprintf(HTTPBUFF,"<tr><td>Schedule tempset:</td><td><b>%d.%d °C</b> [%s]</td></tr>"
+                        , shed_tempset / 10, shed_tempset % 10, weeks);     
     } else {
         os_sprintf(HTTPBUFF,"<tr><td>Global tempset:</td><td><b>%d.%d °C</b></td></tr>", TEMPSET / 10, TEMPSET % 10);     
     }
