@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.63"
+#define FW_VER "3.64"
 
 
 /*
@@ -40,12 +40,16 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define current_temp        valdes[0]  // устанавливать через интерпретер или mqtt - valdes[0]
 #define street_temp         valdes[1]  // устанавливать через интерпретер или mqtt - valdes[0]
-#define work_mode           valdes[2]
-#define schedule            valdes[3]
+
+#define VALDES_INDEX_WORK_MODE     2   //  
+#define work_mode           valdes[VALDES_INDEX_WORK_MODE]
+
+#define VALDES_INDEX_SCHEDULE      3   //  
+#define schedule            valdes[VALDES_INDEX_SCHEDULE]
 #define reset_fuel          valdes[4]
 
-#define VALDES_INDEX_WORK_MODE                  2   //  
-#define VALDES_INDEX_SCHEDULE                  3   //  
+
+
 
 #define flow_temp data1wire[0]
 #define return_temp data1wire[1]
@@ -62,8 +66,6 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define DAY_TIME_DEFAULT 7
 
 #define BACKLIGHT_GPIO 199
-
-#define MCP23017_INTA_PIN 4     // pin esp
 
 #define B(bit_no)         (1 << (bit_no))
 #define BIT_CLEAR(reg, bit_no)   (reg) &= ~B(bit_no)
@@ -117,33 +119,6 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define millis() (unsigned long) (esp_timer_get_time() / 1000ULL)
 
-TaskHandle_t mcp23017_task;
-QueueHandle_t mcp23017_queue;
-
-TimerHandle_t  backlight_timer;
-
-typedef void (*interrupt_cb)(void *arg, uint8_t *state);
-
-typedef struct mcp23017_pin_isr {
-        uint8_t pin;
-        interrupt_cb pin_cb;
-        void *args;
-
-        interrupt_cb pin_cb2;
-        void *args2;
-
-        gpio_int_type_t intr_type;
-        
-        uint32_t up_delay_ms;
-        uint32_t ts_down;
-        uint32_t ts_up;
-
-} mcp23017_pin_isr_t;
-
-mcp23017_pin_isr_t *pin_isr; // указатель на массив коллбеков для пинов
-uint8_t pin_isr_cnt;
-
-
 typedef enum {
     MENU_PAGE_MAIN,
     MENU_PAGE_TEMPSET,
@@ -172,8 +147,6 @@ active_kotel_e active_kotel = KOTEL_NONE;
 uint16_t shed_tempset = 0;
 
 #define WORKMODE    work_mode
-
-
 
 uint8_t display_error = 0;
 TimerHandle_t  show_error_timer;
@@ -330,9 +303,17 @@ void buzzer(uint8_t pattern)   // str_idx номер строки констру
   
 }
 
+void buzzer_init()
+{
+    buzzer_queue = xQueueCreate(1, sizeof(50));
+    xTaskCreate( buzzer_cb, "buzzer", 512+256+128, NULL, 10, &buzzer_task);    
+}
+
 // ******************************************************************************
 // ********** УПРАВЛЕНИЕ ПОДСВЕТКОЙ ДИСПЛЕЯ И ВЫВОДОМ ***************************
 // ******************************************************************************
+TimerHandle_t  backlight_timer;
+
 void backlight_timer_cb(xTimerHandle tmr)   // rtos
 {
     uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
@@ -823,6 +804,32 @@ void change_work_mode()
 #define OLATA       0x14    
 #define OLATB       0x15
 
+
+#define MCP23017_INTA_PIN 4     // pin esp
+TaskHandle_t mcp23017_task;
+QueueHandle_t mcp23017_queue;
+
+typedef void (*interrupt_cb)(void *arg, uint8_t *state);
+
+typedef struct mcp23017_pin_isr {
+        uint8_t pin;
+        interrupt_cb pin_cb;
+        void *args;
+
+        interrupt_cb pin_cb2;
+        void *args2;
+
+        gpio_int_type_t intr_type;
+        
+        uint32_t up_delay_ms;
+        uint32_t ts_down;
+        uint32_t ts_up;
+
+} mcp23017_pin_isr_t;
+
+mcp23017_pin_isr_t *pin_isr; // указатель на массив коллбеков для пинов
+uint8_t pin_isr_cnt;
+
 static void IRAM_ATTR mcp23017_isr_handler(void *arg) {
     portBASE_TYPE HPTaskAwoken = pdFALSE;
     BaseType_t xHigherPriorityTaskWoken;
@@ -1036,6 +1043,43 @@ void button4_press(uint8_t pin, uint8_t *state)
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     last_key_press = millis(); 
     buzzer( BUZZER_BEEP_SHORT );
+}
+
+void mcp23017_init()
+{
+    // установить прерывания пинов
+    MCPwrite_reg16(0, GPINTENA, 0b1111111111111111); // 0b0000111000000000
+
+    // условия сработки прерывания на ногах
+    MCPwrite_reg16(0, INTCONA, 0);  // при нулях
+
+    // дефолтные значения ног, прерывание сработает, если на ноге сигнал отличается от дефолтного, если на пинах значение отличается от  заданного ниже (DEFVAL  = 1 )
+    MCPwrite_reg16(0, DEFVALA, 0b1111111111111111);    
+
+    // установить прерывания на GPIO
+    gpio_config_t gpio_conf;
+    gpio_conf.intr_type = GPIO_INTR_NEGEDGE; //GPIO_INTR_NEGEDGE; //GPIO_INTR_POSEDGE; // GPIO_INTR_ANYEDGE;           
+    gpio_conf.mode = GPIO_MODE_INPUT;
+    gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    gpio_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_conf.pin_bit_mask = (1ULL << MCP23017_INTA_PIN);
+    gpio_config(&gpio_conf);    
+    gpio_install_isr_service(0);
+
+    // прерывание на кнопки mcp23017
+    gpio_isr_handler_add( MCP23017_INTA_PIN, mcp23017_isr_handler, NULL);  
+
+        // 1 - сразу при нажатии         GPIO_INTR_POSEDGE 
+        // 2 - только после отпускания   GPIO_INTR_NEGEDGE 
+        // 3 - любое состояние           GPIO_INTR_ANYEDGE 
+        // или наоборот, зависит от дефолтного состояния пина 1 = 1 или 0 = 2
+    mcp23017_isr_handler_add( 0, GPIO_INTR_POSEDGE, button1_short_press, NULL,          button1_long_press,     NULL, 800);
+    mcp23017_isr_handler_add( 1, GPIO_INTR_POSEDGE, button2_short_press, KOTEL1_GPIO,   button2_long_press,     KOTEL1_GPIO, 800);
+    mcp23017_isr_handler_add( 2, GPIO_INTR_POSEDGE, button3_short_press, KOTEL2_GPIO,   button3_long_press,     KOTEL2_GPIO, 800);
+    mcp23017_isr_handler_add( 3, GPIO_INTR_POSEDGE, button4_press, VENT_GPIO,     button4_press,     ESC_GPIO, 500);
+
+    mcp23017_queue = xQueueCreate(5, sizeof(uint16_t) * 2);
+    xTaskCreate( mcp23017_isr_cb, "mcp23017_isr", 1024, NULL, 10, &mcp23017_task);
 }
 // *******************************************************************************
 
@@ -1529,39 +1573,7 @@ void startfunc(){
 
     if ( err == 1 ) SAVEOPT;
 
-    // установить прерывания пинов
-    MCPwrite_reg16(0, GPINTENA, 0b1111111111111111); // 0b0000111000000000
-
-    // условия сработки прерывания на ногах
-    MCPwrite_reg16(0, INTCONA, 0);  // при нулях
-
-    // дефолтные значения ног, прерывание сработает, если на ноге сигнал отличается от дефолтного, если на пинах значение отличается от  заданного ниже (DEFVAL  = 1 )
-    MCPwrite_reg16(0, DEFVALA, 0b1111111111111111);    
-
-    // установить прерывания на GPIO
-    gpio_config_t gpio_conf;
-    gpio_conf.intr_type = GPIO_INTR_NEGEDGE; //GPIO_INTR_NEGEDGE; //GPIO_INTR_POSEDGE; // GPIO_INTR_ANYEDGE;           
-    gpio_conf.mode = GPIO_MODE_INPUT;
-    gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    gpio_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_conf.pin_bit_mask = (1ULL << MCP23017_INTA_PIN);
-    gpio_config(&gpio_conf);    
-    gpio_install_isr_service(0);
-
-    // прерывание на кнопки mcp23017
-    gpio_isr_handler_add( MCP23017_INTA_PIN, mcp23017_isr_handler, NULL);  
-
-        // 1 - сразу при нажатии         GPIO_INTR_POSEDGE 
-        // 2 - только после отпускания   GPIO_INTR_NEGEDGE 
-        // 3 - любое состояние           GPIO_INTR_ANYEDGE 
-        // или наоборот, зависит от дефолтного состояния пина 1 = 1 или 0 = 2
-    mcp23017_isr_handler_add( 0, GPIO_INTR_POSEDGE, button1_short_press, NULL,          button1_long_press,     NULL, 800);
-    mcp23017_isr_handler_add( 1, GPIO_INTR_POSEDGE, button2_short_press, KOTEL1_GPIO,   button2_long_press,     KOTEL1_GPIO, 800);
-    mcp23017_isr_handler_add( 2, GPIO_INTR_POSEDGE, button3_short_press, KOTEL2_GPIO,   button3_long_press,     KOTEL2_GPIO, 800);
-    mcp23017_isr_handler_add( 3, GPIO_INTR_POSEDGE, button4_press, VENT_GPIO,     button4_press,     ESC_GPIO, 500);
-
-    mcp23017_queue = xQueueCreate(5, sizeof(uint16_t) * 2);
-    xTaskCreate( mcp23017_isr_cb, "mcp23017_isr", 1024, NULL, 10, &mcp23017_task);
+    mcp23017_init();
 
     set_active_kotel( work_mode );
 
@@ -1572,8 +1584,8 @@ void startfunc(){
     fuel_load_data();
 
     // buzzer
-    buzzer_queue = xQueueCreate(1, sizeof(50));
-    xTaskCreate( buzzer_cb, "buzzer", 512+256+128, NULL, 10, &buzzer_task);
+    buzzer_init();
+
 }
 
 void timerfunc(uint32_t  timersrc) {
