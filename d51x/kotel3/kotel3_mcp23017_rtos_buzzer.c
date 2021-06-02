@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.60"
+#define FW_VER "3.63"
 
 
 /*
@@ -266,6 +266,7 @@ typedef enum {
     BUZZER_BEEP_LONG_VERY,
     BUZZER_BEEP_LONG_EXTRA,
     BUZZER_BEEP_DOUBLE_SHORT,
+    BUZZER_BEEP_ERROR,
     BUZZER_BEEP_MAX
 } beep_type_e;
 
@@ -278,17 +279,18 @@ typedef struct {
     uint16_t delay; //msec 
 } buzzer_beep_t;
 
-#define BEEP_COMMAND_LENGTH 4
+#define BEEP_COMMAND_LENGTH 6
 buzzer_beep_t beeps[BUZZER_BEEP_MAX][BEEP_COMMAND_LENGTH] = 
         { 
-              { {1,40}, {0,0}, {0,0}, {0,0} }           //BUZZER_BEEP_SHORT_EXTRA,
-            , { {1,80}, {0,0}, {0,0}, {0,0} }           //BUZZER_BEEP_SHORT_VERY
-            , { {1,120}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_SHORT
-            , { {1,160}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_MEDIUM
-            , { {1,200}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG
-            , { {1,300}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG_VERY
-            , { {1,500}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG_EXTRA
-            , { {1,120}, {0,120}, {1,120}, {0,0} }          //BUZZER_BEEP_DOUBLE_SHORT
+              { {1,40}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} }           //BUZZER_BEEP_SHORT_EXTRA,
+            , { {1,80}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} }           //BUZZER_BEEP_SHORT_VERY
+            , { {1,120}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_SHORT
+            , { {1,160}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_MEDIUM
+            , { {1,200}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG
+            , { {1,300}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG_VERY
+            , { {1,500}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG_EXTRA
+            , { {1,120}, {0,120}, {1,120}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_DOUBLE_SHORT
+            , { {1,100}, {0,100}, {1,100}, {0,100}, {1,100}, {0,0} }          //BUZZER_BEEP_ERROR
         };
 
 
@@ -946,19 +948,20 @@ void button1_short_press(void *args, uint8_t *state)
     uint8_t backlight = LCD_BACKLIGHT_STATE;
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     if ( backlight == 0 && sensors_param.lcden > 0) return;
+
+    buzzer( BUZZER_BEEP_SHORT );    
     change_work_mode();
     last_key_press = millis();  
-
-    buzzer( BUZZER_BEEP_SHORT );
 }
 
 void button1_long_press(void *args, uint8_t *state)
 {
     uint8_t backlight = LCD_BACKLIGHT_STATE;   
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
+    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
     switch_schedule();
     last_key_press = millis();
-    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
+
 }
 
 void button2_short_press(uint8_t pin, uint8_t *state)
@@ -967,8 +970,8 @@ void button2_short_press(uint8_t pin, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     if ( backlight == 0 && sensors_param.lcden > 0) return;
     if ( schedule ) {
+        buzzer( BUZZER_BEEP_ERROR );
         show_display_error("Schedule is enabled. Can't change temperature setpiont!");
-        buzzer( BUZZER_BEEP_DOUBLE_SHORT );
     } else {
         tempset_dec();
         buzzer( BUZZER_BEEP_SHORT );
@@ -982,16 +985,16 @@ void button2_long_press(uint8_t pin, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
 
     if ( work_mode == MODE_AUTO || work_mode == MODE_KOTEL2) {
+        buzzer( BUZZER_BEEP_ERROR );
         show_display_error("Nelzya vklychat kotel1, mode != kotel1");
         return; // нельзя включать реле термостата котла 1, если режим Котел 2
         // TODO: индикация ошибки светодиодом 3-5 быстрых мигания  или показать ошибку на дисплее
     }
-    // если на главной странице, то управляем термостатом 1
-    GPIO_ALL(pin, !GPIO_ALL_GET(pin));
- 
-    last_key_press = millis();
 
     buzzer( BUZZER_BEEP_DOUBLE_SHORT );
+    // если на главной странице, то управляем термостатом 1
+    GPIO_ALL(pin, !GPIO_ALL_GET(pin));
+    last_key_press = millis();
 }
 
 void button3_short_press(uint8_t pin, uint8_t *state)
@@ -1000,13 +1003,13 @@ void button3_short_press(uint8_t pin, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     if ( backlight == 0 && sensors_param.lcden > 0) return;
     if ( schedule ) {
+        buzzer( BUZZER_BEEP_ERROR );
         show_display_error("Schedule is enabled. Can't change temperature setpiont!");
     } else {
+        buzzer( BUZZER_BEEP_SHORT );
         tempset_inc();
     }
     last_key_press = millis();
-
-    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
 }
 
 void button3_long_press(uint8_t pin, uint8_t *state)
@@ -1014,14 +1017,17 @@ void button3_long_press(uint8_t pin, uint8_t *state)
     uint8_t backlight = LCD_BACKLIGHT_STATE;
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     if ( work_mode == MODE_AUTO || work_mode == MODE_KOTEL1) {
+        buzzer( BUZZER_BEEP_ERROR );
         show_display_error("Nelzya vklychat kotel2, mode != kotel2");
         return; // нельзя включать реле термостата котла 2, если режим Котел 1
     // TODO: индикация ошибки светодиодом 3-5 быстрых мигания или показать ошибку на дисплее
     }
+
+    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     last_key_press = millis();
 
-    buzzer( BUZZER_BEEP_DOUBLE_SHORT );
+    
 }
 
 void button4_press(uint8_t pin, uint8_t *state)
