@@ -1,10 +1,10 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.50"
+#define FW_VER "3.59"
 
 
 /*
 Количество настроек
-Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay, Kotel1LED, Kotel2LED, KotelWorkLed, PumpWorkLed, ScheduleLed, VentLed, GlobalTempSet
+Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay, Kotel1LED, Kotel2LED, KotelWorkLed, PumpWorkLed, ScheduleLed, VentLed, GlobalTempSet, Buzzer GPIO
 
 */
 
@@ -36,6 +36,7 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define VENT_LED_GPIO sensors_param.cfgdes[14]
 
 #define TEMPSET sensors_param.cfgdes[15]
+#define BUZZER_GPIO sensors_param.cfgdes[16]
 
 #define current_temp        valdes[0]  // устанавливать через интерпретер или mqtt - valdes[0]
 #define street_temp         valdes[1]  // устанавливать через интерпретер или mqtt - valdes[0]
@@ -192,7 +193,7 @@ esp_err_t nvs_param_load(const char* space_name, const char* key, void* dest)
     ret = nvs_open(space_name, NVS_READWRITE, &my_handle);
     ret = nvs_get_blob(my_handle, key, NULL, &required_size);
     if (required_size == 0) {
-        ESP_LOGW(TAG, "the target you want to load has never been saved");
+        ESP_LOGW("NVS", "the target [ %s ] you want to load has never been saved", key);
         ret = ESP_FAIL;
         goto LOAD_FINISH;
     }
@@ -236,141 +237,98 @@ esp_err_t nvs_param_save_u32(const char* space_name, const char* key, uint32_t *
     ESP_LOGI(UTAG, "%s: space = %s, param = %s", __func__, space_name, key);
     uint32_t val = 0;
     esp_err_t err = nvs_param_load(space_name, key, &val);
-    ESP_LOGI(UTAG, "value in nvs = %d, value to save = %d", val, *param);
+    //ESP_LOGI(UTAG, "value in nvs = %d, value to save = %d", val, *param);
     if ( err != ESP_OK ) {
         err = nvs_param_save(space_name, key, param, sizeof(uint32_t));
         return err;
     }
     if ( val != *param) {
-        ESP_LOGI(UTAG, "need save");
+        //ESP_LOGI(UTAG, "need save");
         err = nvs_param_save(space_name, key, param, sizeof(uint32_t));
-    } else {
-        ESP_LOGI(UTAG, "no need save");
-    }
+    } 
+    //else {
+    //     ESP_LOGI(UTAG, "no need save");
+    // }
     return err;
 }
 
 // ******************************************************************************
 // ********** ФУНКЦИИ ДЛЯ РАБОТЫ С Buzzer ***************************************
 // ******************************************************************************
-#define BUZZER_GPIO 16
+//#define BUZZER_GPIO 16
+
 #define buzzer1_data sensors_param.strrep[0] 
 #define buzzer2_data sensors_param.strrep[1] 
-// maxlines - кол-во строк в конструкторе строк
-// sensors_param.strrep[i]  номер строки из конструктора строк
+
+typedef enum {
+    BUZZER_BEEP_SHORT_EXTRA,
+    BUZZER_BEEP_SHORT_VERY,
+    BUZZER_BEEP_SHORT,
+    BUZZER_BEEP_MEDIUM,
+    BUZZER_BEEP_LONG,
+    BUZZER_BEEP_LONG_VERY,
+    BUZZER_BEEP_LONG_EXTRA,
+    BUZZER_BEEP_DOUBLE_SHORT,
+    BUZZER_BEEP_MAX
+} beep_type_e;
 
 TimerHandle_t  buzzer_timer;
-
+QueueHandle_t buzzer_queue;
+TaskHandle_t buzzer_task;
 
 typedef struct {
     uint16_t action;    // 0 - off, 1 - on
     uint16_t delay; //msec 
 } buzzer_beep_t;
 
-char** str_split(char* a_str, const char a_delim, int *cnt)
+#define BEEP_COMMAND_LENGTH 4
+buzzer_beep_t beeps[BUZZER_BEEP_MAX][BEEP_COMMAND_LENGTH] = 
+        { 
+              { {1,40}, {0,0}, {0,0}, {0,0} }           //BUZZER_BEEP_SHORT_EXTRA,
+            , { {1,80}, {0,0}, {0,0}, {0,0} }           //BUZZER_BEEP_SHORT_VERY
+            , { {1,120}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_SHORT
+            , { {1,160}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_MEDIUM
+            , { {1,200}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG
+            , { {1,300}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG_VERY
+            , { {1,500}, {0,0}, {0,0}, {0,0} }          //BUZZER_BEEP_LONG_EXTRA
+            , { {1,120}, {0,120}, {1,120}, {0,0} }          //BUZZER_BEEP_DOUBLE_SHORT
+        };
+
+
+
+void buzzer_beep(buzzer_beep_t *pattern)
 {
-    char** result    = 0;
-    size_t count     = 0;
-    char* tmp        = a_str;
-    char* last_comma = 0;
-    char delim[2];
-    delim[0] = a_delim;
-    delim[1] = 0;
-    while (*tmp)
+    GPIO_ALL( BUZZER_GPIO, 0);
+    for (uint8_t i = 0; i < BEEP_COMMAND_LENGTH; i++)
     {
-        if (a_delim == *tmp)
-        {
-            count++;
-            last_comma = tmp;
-        }
-        tmp++;
+        //ESP_LOGI(UTAG, "buzzer %d, action %d, delay %d", i, pattern[i].action, pattern[i].delay);
+        GPIO_ALL( BUZZER_GPIO, pattern[i].action);
+        if (pattern[i].delay > 0 )
+            vTaskDelay( pattern[i].delay / portTICK_PERIOD_MS );
     }
-    count += last_comma < (a_str + strlen(a_str) - 1);
-    *cnt = count;
-    result = malloc(sizeof(char*) * count);
-    if (result)
-    {
-        size_t idx  = 0;
-        char* token = strtok(a_str, delim);
-        while (token)
-        {
-            *(result + idx++) = strdup(token);
-            token = strtok(NULL, delim);
-        }
-        *(result + idx) = 0;
-    }
-    return result;
+    GPIO_ALL( BUZZER_GPIO, 0);
 }
 
-void buzzer(const char *pattern)
-{
-    ESP_LOGI(UTAG, "%s: pattern = %s", __func__, pattern);
-    char** beeps;
-    int count = 0;
-    buzzer_beep_t *buzzer_beeps;
+static void buzzer_cb(void *arg) {
+	while (1) {
 
-    char *str = strdup(pattern);
-    beeps = str_split(str, ';', &count);
-    if (beeps)
-    {
-        buzzer_beeps = malloc( count * sizeof(buzzer_beep_t) );
-        int i;
-        for (i = 0; *(beeps + i); i++)
-        {
-            char *s1 = strchr(*(beeps + i), ':');
-            if ( s1 != NULL ) {
-                char t[5] = "";
-                strncpy(t,*(beeps + i),s1-*(beeps + i));
-                buzzer_beeps[i].action = atoi(t);
-                strcpy(t,*(beeps + i) + 2);
-                buzzer_beeps[i].delay = atoi(t);
+            buzzer_beep_t *pattern;
+            if ( xQueueReceive(buzzer_queue, &pattern, 0) == pdPASS) 
+            {
+                buzzer_beep(pattern);
             }
-            free(*(beeps + i));
-        }
-
-        for (i = 0; i < count; i++)
-        {
-            ESP_LOGI(UTAG, "buzzer %d, action %d, delay %d", i, buzzer_beeps[i].action, buzzer_beeps[i].delay);
-            GPIO_ALL( BUZZER_GPIO, buzzer_beeps[i].action);
-            vTaskDelay( buzzer_beeps[i].delay / portTICK_PERIOD_MS );
-        }
-        free(buzzer_beeps);
-        free(beeps);
+        vTaskDelay( 10 / portTICK_PERIOD_MS );
     }
-
-    free(str);
-
-    GPIO_ALL( BUZZER_GPIO, 0);
+    vTaskDelete(NULL);
 }
 
-void buzzer_cb(xTimerHandle tmr)   // rtos
+void buzzer(buzzer_beep_t *pattern)   // str_idx номер строки конструктора строк, с 0 начинается
 {
-    char *data = (char *)pvTimerGetTimerID(tmr);
-    buzzer( data );
-    xTimerStop( buzzer_timer, 0);
-    //xTimerDelete(buzzer_timer, 10);
-    //buzzer_timer = NULL;
-}
+    if ( BUZZER_GPIO == 255 ) return;
 
-
-
-
-void buzeer_beep(const char *data)   // str_idx номер строки конструктора строк, с 0 начинается
-{
     GPIO_ALL( BUZZER_GPIO, 0);
-    if ( data == NULL || strcmp( data, "") == 0) return;
-
-    if ( buzzer_timer == NULL )
-    {
-        buzzer_timer = xTimerCreate("buzzer", 10 / portTICK_PERIOD_MS, pdFALSE, data, buzzer_cb);
-    }
-
-    if ( xTimerIsTimerActive( buzzer_timer ) == pdTRUE )
-    {
-        xTimerStop( buzzer_timer, 0);
-    }    
-
-    xTimerStart( buzzer_timer, 0);   
+    xQueueOverwrite(buzzer_queue, ( buzzer_beep_t * )&pattern);
+  
 }
 
 // ******************************************************************************
@@ -412,7 +370,6 @@ void lcd_print_(uint8_t line, const char *str)
         LCD_print(line, str);
     #endif
 }
-
 
 void lcd_print(uint8_t line, const char *str)
 {
@@ -699,6 +656,7 @@ void tempset_inc()
 
 void switch_schedule()
 {
+    static uint8_t prev = 0;
     if ( schedule ) 
     {
         
@@ -710,7 +668,10 @@ void switch_schedule()
     }
     schedule = 1 - schedule;
 
-    nvs_param_save_u32(SPACE_NAME, SCHEDULE_PARAM, &schedule);
+   if ( prev != schedule)
+         nvs_param_save_u32(SPACE_NAME, SCHEDULE_PARAM, &schedule);
+
+    prev = schedule;
 
 }
 
@@ -810,11 +771,14 @@ void set_active_kotel(mode_e mode)
 
 void change_work_mode()
 {
+    static uint8_t prev = 0;
     if ( display_error == 1 ) return;
     work_mode++;
     if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
-    nvs_param_save_u32(SPACE_NAME, WORK_MODE_PARAM, &work_mode); 
+    if ( prev != work_mode )
+        nvs_param_save_u32(SPACE_NAME, WORK_MODE_PARAM, &work_mode); 
     set_active_kotel( work_mode );
+    prev = work_mode;
 }
 
 // *******************************************************************************
@@ -988,7 +952,7 @@ void button1_short_press(void *args, uint8_t *state)
     change_work_mode();
     last_key_press = millis();  
 
-    buzeer_beep(buzzer1_data);
+    buzzer(&beeps[BUZZER_BEEP_DOUBLE_SHORT]);
 }
 
 void button1_long_press(void *args, uint8_t *state)
@@ -1059,27 +1023,27 @@ void button4_press(uint8_t pin, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     GPIO_ALL(pin, !GPIO_ALL_GET(pin));
     last_key_press = millis(); 
-    buzeer_beep(buzzer2_data);
+    buzzer(&beeps[BUZZER_BEEP_LONG_EXTRA]);
 }
 // *******************************************************************************
 
 
 
 
-void save_params_to_nvs()
-{
-    // записать изменения в nvs
-    uint16_t tmp_val = 0;
-    if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &tmp_val) == ESP_OK ) {
-        if ( tmp_val != work_mode )
-            nvs_param_save_u32(SPACE_NAME, WORK_MODE_PARAM, &work_mode); 
-    }
+// void save_params_to_nvs()
+// {
+//     // записать изменения в nvs
+//     uint16_t tmp_val = 0;
+//     if ( nvs_param_load(SPACE_NAME, WORK_MODE_PARAM, &tmp_val) == ESP_OK ) {
+//         if ( tmp_val != work_mode )
+//             nvs_param_save_u32(SPACE_NAME, WORK_MODE_PARAM, &work_mode); 
+//     }
 
-    if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &tmp_val) == ESP_OK ) {
-        if ( tmp_val != schedule )
-            nvs_param_save_u32(SPACE_NAME, SCHEDULE_PARAM, &schedule); 
-    }
-}
+//     if ( nvs_param_load(SPACE_NAME, SCHEDULE_PARAM, &tmp_val) == ESP_OK ) {
+//         if ( tmp_val != schedule )
+//             nvs_param_save_u32(SPACE_NAME, SCHEDULE_PARAM, &schedule); 
+//     }
+// }
 
 void control_indications()
 {
@@ -1529,6 +1493,7 @@ void startfunc(){
     ESP_LOGW(UTAG, "Loaded schedule = %d", schedule);
 
     uint8_t err = 0;
+
     if ( KOTEL1_GPIO == 0 || KOTEL1_GPIO >=255 ) { KOTEL1_GPIO = KOTEL1_GPIO_DEFAULT ; err = 1; }
     if ( KOTEL2_GPIO == 0 || KOTEL2_GPIO >= 255 ) { KOTEL2_GPIO = KOTEL2_GPIO_DEFAULT ; err = 1; }
     if ( PUMP1_GPIO == 0 || PUMP1_GPIO >= 255 ) { PUMP1_GPIO = PUMP1_GPIO_DEFAULT ; err = 1; }
@@ -1547,6 +1512,8 @@ void startfunc(){
     if ( VENT_LED_GPIO == 0 || VENT_LED_GPIO >= 255 ) { VENT_LED_GPIO = 255 ; err = 1; }
 
     if ( TEMPSET < 100 || TEMPSET > 300 ) { TEMPSET = 240 ; err = 1; }
+
+    if ( BUZZER_GPIO == 0 || BUZZER_GPIO >=255 ) { BUZZER_GPIO = 255 ; err = 1; }
 
     if ( err == 1 ) SAVEOPT;
 
@@ -1592,14 +1559,17 @@ void startfunc(){
     // читаем сохраненные данные по топливному насосу
     fuel_load_data();
 
+    // buzzer
+    buzzer_queue = xQueueCreate(1, sizeof(50));
+    xTaskCreate( buzzer_cb, "buzzer", 512+256+128, NULL, 10, &buzzer_task);
 }
 
 void timerfunc(uint32_t  timersrc) {
     // выполнение кода каждую 1 секунду
 
-    if ( timersrc % 10 == 0 ) {
-        save_params_to_nvs();
-    }
+    // if ( timersrc % 600 == 0 ) {
+    //     save_params_to_nvs();
+    // }
 
     if ( timersrc % 30 == 0 ) {
         // выполнение кода каждые 30 секунд
