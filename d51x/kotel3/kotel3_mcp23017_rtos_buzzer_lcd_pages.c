@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.85"
+#define FW_VER "3.91"
 
 
 /*
@@ -111,6 +111,8 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define millis() (unsigned long) (esp_timer_get_time() / 1000ULL)
 
+typedef void (*func_cb)();
+
 typedef enum {
       PAGE_MAIN
     , PAGE_KOTEL1_RATE
@@ -146,9 +148,9 @@ uint16_t shed_tempset = 0;
 
 #define WORKMODE    work_mode
 
-uint8_t display_error = 0;
-TimerHandle_t  show_error_timer;
-#define SHOW_ERROR_TIMEOUT 5000
+uint8_t display_alert = 0;
+TimerHandle_t  show_alert_timer;
+#define SHOW_ALERT_TIMEOUT 5000
 
 uint32_t last_key_press = 0;
 #define MENU_EXIT_TIMEOUT 10000 // 10 sec
@@ -304,7 +306,9 @@ void buzzer(uint8_t pattern)   // str_idx номер строки констру
 void buzzer_init()
 {
     buzzer_queue = xQueueCreate(1, sizeof(50));
-    xTaskCreate( buzzer_cb, "buzzer", 512+256+128, NULL, 10, &buzzer_task);    
+    xTaskCreate( buzzer_cb, "buzzer", 512+256+128, NULL, 10, &buzzer_task); 
+
+    buzzer( BUZZER_BEEP_ERROR );   
 }
 
 
@@ -759,6 +763,13 @@ const uint8_t lcd_char_bar_full[8] =
 
 #define LCD_CMD_CLEAR               0x01 
 
+#define LCD_CMD_DISPLAY_ON           0x04        // turns display ON/retrive text (D)
+#define LCD_CMD_DISPLAY_OFF          0x00        // turns display OFF/clears text (D)
+#define LCD_CMD_UNDERLINE_CURSOR_ON  0x02        // turns ON  underline cursor (C)
+#define LCD_CMD_UNDERLINE_CURSOR_OFF 0x00        // turns OFF underline cursor (C)
+#define LCD_CMD_BLINK_CURSOR_ON      0x01        // turns ON  blinking  cursor (B)
+#define LCD_CMD_BLINK_CURSOR_OFF     0x00        // turns OFF blinking  cursor (B)
+
 TimerHandle_t  backlight_timer;
 uint8_t lcd_splash = 1;
 
@@ -802,21 +813,21 @@ void lcd_print_(uint8_t line, const char *str)
 void lcd_print(uint8_t line, const char *str)
 {
     // если sens_state вздедена датчиками, то дисплей не выводит )))
-    if ( display_error == 1 ) return;
+    if ( display_alert == 1 ) return;
     lcd_print_(line, str);
 }
 
-void show_display_error_cb(xTimerHandle tmr)   // rtos
+void show_display_alert_cb(xTimerHandle tmr)   // rtos
 {
-    display_error = 0;
-    xTimerStop( show_error_timer, 0);
-    xTimerDelete(show_error_timer, 10);
-    show_error_timer = NULL;
+    display_alert = 0;
+    xTimerStop( show_alert_timer, 0);
+    xTimerDelete(show_alert_timer, 10);
+    show_alert_timer = NULL;
 }
 
-void print_error(const char *str)
+void print_alert(const char *title, const char *str)
 {
-    lcd_print_(0, "   *** ERROR ***    ");
+    lcd_print_(0, title);
     char err[21];
     if ( strlen(str) > 20 )
     {
@@ -844,29 +855,35 @@ void print_error(const char *str)
     
 }
 
-void show_display_error(const char *str)
+void show_display_alert(const char *title, const char *str, func_cb cb)
 {
-    display_error = 1;
+    
+    display_alert = 0;
 
-    if ( show_error_timer == NULL )
+    if ( show_alert_timer == NULL )
     {
-        show_error_timer = xTimerCreate("dsplerr", SHOW_ERROR_TIMEOUT / portTICK_PERIOD_MS, pdFALSE, NULL, show_display_error_cb);
+        show_alert_timer = xTimerCreate("lcdalert", SHOW_ALERT_TIMEOUT / portTICK_PERIOD_MS, pdFALSE, NULL, show_display_alert_cb);
     }
 
-    if ( xTimerIsTimerActive( show_error_timer ) == pdTRUE )
+    if ( xTimerIsTimerActive( show_alert_timer ) == pdTRUE )
     {
-        xTimerStop( show_error_timer, 0);
+        xTimerStop( show_alert_timer, 0);
     }    
 
-    xTimerStart( show_error_timer, 0);   
+    xTimerStart( show_alert_timer, 0);   
 
     // show error
-    print_error(str);
+    if ( cb == NULL)
+        print_alert(title, str);
+    else
+        cb();
+
+    display_alert = 1;
 }
 
 void menu_next()
 {
-    if ( display_error == 1 ) return;
+    if ( display_alert == 1 ) return;
     menu_idx++;
     if ( menu_idx >= PAGE_MAX ) menu_idx = PAGE_MAIN;
     last_key_press = millis();
@@ -874,7 +891,7 @@ void menu_next()
 
 void menu_prev()
 {
-    if ( display_error == 1 ) return;
+    if ( display_alert == 1 ) return;
     menu_idx--;
     if ( menu_idx == PAGE_MAIN ) menu_idx = PAGE_MAX - 1;
     last_key_press = millis();
@@ -939,32 +956,17 @@ void show_main_page()
     {
         strcpy(smode, "MANUAL");
         strcat(smode, "[");
-        if ( GPIO_ALL_GET( KOTEL1_GPIO) )
-            strcat(smode, "1");
-        else 
-            strcat(smode, "-" );     
-        
-        if ( GPIO_ALL_GET( KOTEL2_GPIO) )
-            strcat(smode,  "2");
-        else
-            strcat(smode, "-");
-
-        strcat(smode, "]");
+        strcat(smode, GPIO_ALL_GET( KOTEL1_GPIO) ? "1" : "-");
+        strcat(smode, GPIO_ALL_GET( KOTEL2_GPIO) ? "2" : "-");
     }
     else if ( work_mode == MODE_KOTEL1 ) {
         strcpy(smode, "KOTEL1");
-        if ( GPIO_ALL_GET( KOTEL1_GPIO ) ) 
-            strcat(smode,  "[*]");
-        else
-            strcat(smode,  "[-]");
+        strcat(smode, GPIO_ALL_GET( KOTEL1_GPIO ) ? "[*" : "[-");
     }
     else if ( work_mode == MODE_KOTEL2 ) 
     {
         strcpy(smode, "KOTEL2");
-        if ( GPIO_ALL_GET( KOTEL2_GPIO ) ) 
-            strcat(smode,  "[*]");
-        else
-            strcat(smode,  "[-]");            
+        strcat(smode, GPIO_ALL_GET( KOTEL2_GPIO ) ? "[*" : "[-");
     }    
     else if ( work_mode == MODE_AUTO ) 
     {
@@ -973,21 +975,20 @@ void show_main_page()
         {
             strcat(smode,  "[1");
             strcat(smode, THERMO_STATE(1) ? "*" : "");
-            strcat(smode, "]"); 
         }
         else if ( active_kotel == KOTEL_2 )
         {
             strcat(smode,  "[2");
             strcat(smode, THERMO_STATE(2) ? "*" : "");
-            strcat(smode, "]"); 
         }
         else 
-            strcat( smode, "[-]"); 
+            strcat( smode, "[-"); 
     }
     else {
-        strcpy(smode, "ERROR");
+        strcpy(smode, "ERROR[-");
     }
-
+    strcat(smode, "]");
+    
     snprintf(str, 21, line2_pattern
                 , smode
                 , SYMBOL_ARROW_DOWN   //SYMBOL_ARROW_LEFT       
@@ -998,23 +999,24 @@ void show_main_page()
 
     lcd_print(1, str);
 
-    char sc[4] = "";
+    char sc[6] = "";
     if ( schedule ) 
     {
         static pos = 0;
         strcpy(sc, "");
-        for ( uint8_t j = 0; j < 4; j++) 
+        for ( uint8_t j = 0; j < 5; j++) 
         {
             strcat(sc, j == pos ? ">" : "-");
         }
         pos++;
-        if ( pos > 4 ) pos = 0;
-    } else 
-        strcpy(sc, "   <");
-
+        if ( pos > 5 ) pos = 0;
+        strcat(sc, " ");
+    } else {
+        strcpy(sc, ii % 2 ? "     >" : "      ");
+    }
     // S	с	h	d	:	O	F	F				>	T	s	:	2	2	.	2	°
     //#define line3_pattern "Schd:%3s%4sTs:%2d.%1d%c"    
-    #define line3_pattern "%c%c%3s  %4s Ts:%2d.%1d%c"    
+    #define line3_pattern "%c%c%3s %6sTs:%2d.%1d%c"    
 
     snprintf(str, 21, line3_pattern
                 , SYMBOL_SCHEDULE_PART1
@@ -1031,18 +1033,18 @@ void show_main_page()
 
      // V	e	n	t	:	O	F	F					S	t	:	2	2	.	2	°
     //#define line4_pattern "Vent:%3s    %2s:%2d.%1d%c"
-    #define line4_pattern "%c%c%3s N:%3s %2s:%2d.%1d%c"
+    #define line4_pattern "%c%c%3s %5s %2s:%2d.%1d%c"
 
     snprintf(str, 21, line4_pattern
                 , SYMBOL_VENT_PART1
                 , SYMBOL_VENT_PART2
                 , GPIO_ALL_GET( VENT_GPIO ) ? "ON " : "OFF"
-                , GPIO_ALL_GET( ESC_GPIO ) ? "ON " : "OFF"
+                , GPIO_ALL_GET( ESC_GPIO ) ? "NIGHT" : "     "
                 , show_cur_temp ?  "St" : "T#"
                 , show_cur_temp ? ( street_temp / 10 ) : ( current_temp / 10 )
                 , show_cur_temp ? ( street_temp % 10 ) : ( current_temp % 10 )
                 , SYMBOL_DEGREE);
-    lcd_print(3, str);
+    lcd_print(3, str);        
 
     ii++;
 }
@@ -1053,7 +1055,8 @@ void lcd_show_splash(uint8_t timeout)
     char str[21];
     snprintf(str, 21, "Starting %s", sensors_param.hostname);
     lcd_print(0, str);
-    snprintf(str, 21, "firmware v.%s", FW_VER);
+    snprintf(str, 21, "    firmware v.%5s", FW_VER);
+    
     lcd_print(1, str);
 
     tcpip_adapter_ip_info_t local_ip;
@@ -1222,21 +1225,20 @@ void show_page_version()
 
     char str[21];
     memset(str, SYMBOL_SPACE, 21);
-    snprintf(str, 21, "Hostname: %s", sensors_param.hostname);
+    snprintf(str, 21, "Hostname:%11s", sensors_param.hostname);
     lcd_print(0, str);
 
     memset(str, SYMBOL_SPACE, 21);
-    snprintf(str, 21, "firmware v.%s", FW_VER);
+    snprintf(str, 21, "firmware     v.%5s", FW_VER);
     lcd_print(1, str);
 
-    memset(str, SYMBOL_SPACE, 21);
-    memset(str, 0, 21);
+    snprintf(str, 21, "FreeHeap: %10d", esp_get_free_heap_size());
     lcd_print(2, str);
 
     memset(str, SYMBOL_SPACE, 21);
     tcpip_adapter_ip_info_t local_ip;
     tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &local_ip);
-    snprintf(str,21, "IP: %d.%d.%d.%d" , IP2STR( &local_ip.ip) );
+    snprintf(str,21, "IP: %d.%d.%d.%d     " , IP2STR( &local_ip.ip) );
     lcd_print(3, str);   
     
 }
@@ -1356,17 +1358,20 @@ void pump_tempset_inc(){}
 
 void switch_schedule()
 {
-    static uint8_t prev = 0;
+    static uint8_t prev = 0;    
+    
+    schedule = 1 - schedule;
+    
     if ( schedule ) 
     {
-        
+        set_tempset_by_schedule();
 
     } else {
         // расписание выключено, установим глобальную уставку
         THERMO_TEMP_SET(1, TEMPSET);
         THERMO_TEMP_SET(2, TEMPSET);   
     }
-    schedule = 1 - schedule;
+
 
    if ( prev != schedule)
          nvs_param_save_u32(SPACE_NAME, SCHEDULE_PARAM, &schedule);
@@ -1476,7 +1481,7 @@ void set_active_kotel(mode_e mode)
 void change_work_mode()
 {
     static uint8_t prev = 0;
-    if ( display_error == 1 ) return;
+    if ( display_alert == 1 ) return;
 
     work_mode++;
     if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
@@ -1491,7 +1496,7 @@ void change_work_mode()
 void change_work_mode_back()
 {
     static uint8_t prev = 0;
-    if ( display_error == 1 ) return;
+    if ( display_alert == 1 ) return;
 
     
     if ( work_mode == MODE_MANUAL ) work_mode = MODE_MAX;
@@ -1707,9 +1712,10 @@ void button1_short_press(void *args, uint8_t *state)
                 if ( work_mode != MODE_MANUAL ) {
                     if ( schedule ) {
                         buzzer( BUZZER_BEEP_ERROR );
-                        show_display_error("Schedule is enabled. Can't change temperature setpiont!");
+                        show_display_alert("   *** ERROR ***    ", "Schedule is enabled. Can't change temperature setpiont!", NULL);
                     } else {
                         tempset_dec();
+                        show_display_alert(NULL, NULL, show_page_tempset);
                     } 
                 } else {
                     GPIO_INVERT( KOTEL1_GPIO );
@@ -1793,9 +1799,10 @@ void button2_short_press(uint8_t pin, uint8_t *state)
                 if ( work_mode != MODE_MANUAL ) {
                     if ( schedule ) {
                         buzzer( BUZZER_BEEP_ERROR );
-                        show_display_error("Schedule is enabled. Can't change temperature setpiont!");
+                        show_display_alert("   *** ERROR ***    ", "Schedule is enabled. Can't change temperature setpiont!", NULL);
                     } else {
                         tempset_inc();
+                        show_display_alert(NULL, NULL, show_page_tempset);
                     } 
                 } else {
                     GPIO_INVERT( KOTEL2_GPIO );
@@ -2185,6 +2192,9 @@ void startfunc(){
 
     if ( err == 1 ) SAVEOPT;
 
+    // buzzer
+    buzzer_init();
+
     mcp23017_init();
 
     set_active_kotel( work_mode );
@@ -2196,8 +2206,7 @@ void startfunc(){
     // читаем сохраненные данные по топливному насосу
     fuel_load_data();
 
-    // buzzer
-    buzzer_init();
+
 
 }
 
