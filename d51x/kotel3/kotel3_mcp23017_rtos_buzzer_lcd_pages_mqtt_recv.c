@@ -1,9 +1,9 @@
 static const char* UTAG = "USR";
-#define FW_VER "4.01"
+#define FW_VER "4.04"
 
 /*
 Количество настроек
-Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay, Kotel1LED, Kotel2LED, KotelWorkLed, PumpWorkLed, ScheduleLed, VentLed, GlobalTempSet, Buzzer GPIO
+Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay, Kotel1LED, Kotel2LED, KotelWorkLed, PumpWorkLed, ScheduleLed, VentLed, GlobalTempSet, Buzzer GPIO, PumpMode, PumpTimeout
 */
 
 #define TEMPSET_STEP 1
@@ -34,6 +34,8 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define TEMPSET sensors_param.cfgdes[15]
 #define BUZZER_GPIO sensors_param.cfgdes[16]
+#define PUMP_MODE sensors_param.cfgdes[17]
+#define PUMP_OFF_TIMEOUT sensors_param.cfgdes[18]
 
 #define current_temp        valdes[0]  // устанавливать через интерпретер или mqtt
 #define street_temp         valdes[1]  // устанавливать через интерпретер или mqtt
@@ -138,7 +140,7 @@ uint16_t shed_tempset = 0;
 
 uint8_t display_alert = 0;
 TimerHandle_t  show_alert_timer;
-#define SHOW_ALERT_TIMEOUT 5000
+#define SHOW_ALERT_TIMEOUT 3000
 
 uint32_t last_key_press = 0;
 #define MENU_EXIT_TIMEOUT 60000 // 10 sec
@@ -1508,26 +1510,80 @@ void set_tempset_by_schedule(uint8_t _schedule)
     
 }
 
+typedef enum {
+    PUMP_MODE_NONE, // * 0. не управляем реле насоса
+    PUMP_MODE_1,    // * 1. реле насоса вкл/выкл по реле котла
+    PUMP_MODE_2,    // * 2. реле насоса вкл по реле котла, выкл через Х минут, после выключения реле котла
+    PUMP_MODE_3,    // * 3. реле насоса вкл по реле котла, выкл по температуре обратки
+    PUMP_MODE_MAX
+} pump_mode_e;
+
+//pump_mode_e pump_mode;
+
+#define PUMP1_OFF_TIMEOUT    PUMP_OFF_TIMEOUT  // seconds
+#define PUMP2_OFF_TIMEOUT    PUMP_OFF_TIMEOUT  // seconds
+
+//#define pump_mode PUMP_MODE
+#define  PARAM_NAME_PUMP_MODE "pumpmode"
+
+void set_pump_mode(uint8_t _mode)
+{
+    if ( _mode >= PUMP_MODE_MAX || _mode == PUMP_MODE ) return;
+    PUMP_MODE = _mode;
+    //nvs_param_save_u32(SPACE_NAME, PARAM_NAME_PUMP_MODE, &pump_mode);
+}
+
 void control_return_water_thermostats()
 {
+    if ( PUMP_MODE == PUMP_MODE_NONE ) return;
+    
     // управление термостатами воды
-    if ( GPIO_ALL_GET(KOTEL1_GPIO) == 1 ) {
-        // котел включен, включим термостат воды 
-       THERMO_ON(3);
-    } else {
-        // котел выключили, ждем понижения температуры обратки
-        // т.е отключения реле насоса и выключаем термостат воды
-        if ( GPIO_ALL_GET(PUMP1_GPIO) == 0 || GPIO_ALL_GET(KOTEL2_GPIO) == 1) THERMO_OFF(3);
+    // включаем насос всегда при включении реле котла
+    if ( GPIO_ALL_GET(KOTEL1_GPIO) ) GPIO_ALL( PUMP1_GPIO, 1);
+    if ( GPIO_ALL_GET(KOTEL2_GPIO) ) GPIO_ALL( PUMP2_GPIO, 1);
+
+    // выключаем по режиму работы
+    if ( PUMP_MODE == PUMP_MODE_1 )
+    {
+        // * 1. реле насоса вкл/выкл по реле котла
+        if ( !GPIO_ALL_GET(KOTEL1_GPIO) ) GPIO_ALL( PUMP1_GPIO, 0);
+        if ( !GPIO_ALL_GET(KOTEL2_GPIO) ) GPIO_ALL( PUMP2_GPIO, 0);
+    }
+    else if ( PUMP_MODE == PUMP_MODE_2 )
+    {
+        // * 2. реле насоса вкл по реле котла, выкл через Х минут, после выключения реле котла
+        static uint32_t t1, t2 = 0;
+
+        if ( !GPIO_ALL_GET(KOTEL1_GPIO) && ( millis() - t1 > PUMP1_OFF_TIMEOUT*1000) ) {
+            GPIO_ALL( PUMP1_GPIO, 0);
+            t1 = millis();
+        } else if ( GPIO_ALL_GET(KOTEL1_GPIO) ) t1 = millis();
+
+        if ( !GPIO_ALL_GET(KOTEL2_GPIO) && ( millis() - t2 > PUMP2_OFF_TIMEOUT*1000) ) {
+            GPIO_ALL( PUMP2_GPIO, 0);
+            t2 =millis();
+        }  else if ( GPIO_ALL_GET(KOTEL2_GPIO) ) t2 = millis();        
+    }
+    else if ( PUMP_MODE == PUMP_MODE_3 )
+    {
+        if ( GPIO_ALL_GET(KOTEL1_GPIO) ) THERMO_ON(3);
+        if ( GPIO_ALL_GET(KOTEL2_GPIO) ) THERMO_ON(4);
+
+        // * 3. реле насоса вкл по реле котла, выкл по температуре обратки
+        if ( !GPIO_ALL_GET(KOTEL1_GPIO) ) {
+            // котел выключили, ждем понижения температуры обратки
+            // т.е отключения реле насоса и выключаем термостат воды
+            if ( GPIO_ALL_GET(PUMP1_GPIO) == 0 || GPIO_ALL_GET(KOTEL2_GPIO) == 1) THERMO_OFF(3);
+        }
+
+        if ( !GPIO_ALL_GET(KOTEL2_GPIO) ) {
+            // котел выключили, ждем понижения температуры обратки
+            // или отключения реле насоса и выключаем термостат воды
+            if ( GPIO_ALL_GET(PUMP2_GPIO) == 0 || GPIO_ALL_GET(KOTEL1_GPIO) == 1) THERMO_OFF(4);
+        }  
     }
 
-    if ( GPIO_ALL_GET(KOTEL2_GPIO) == 1 ) {
-        // котел включили
-       THERMO_ON(4);
-    } else {
-        // котел выключили, ждем понижения температуры обратки
-        // или отключения реле насоса и выключаем термостат воды
-        if ( GPIO_ALL_GET(PUMP2_GPIO) == 0 || GPIO_ALL_GET(KOTEL1_GPIO) == 1) THERMO_OFF(4);
-    }  
+
 }
 
 void set_active_kotel(mode_e mode)
@@ -1563,37 +1619,37 @@ void set_active_kotel(mode_e mode)
     }
 }
 
+void set_work_mode(uint8_t _mode)
+{
+    if ( _mode >= MODE_MAX || _mode == work_mode ) return;
+    static uint8_t prev = 0;    
+    if ( prev != work_mode )
+        nvs_param_save_u32(SPACE_NAME, PARAM_NAME_WORKMODE, &work_mode); 
+
+    set_active_kotel( work_mode );
+    prev = work_mode;
+}
+
 void change_work_mode()
 {
-    static uint8_t prev = 0;
+    
     if ( display_alert == 1 ) return;
 
     work_mode++;
     if ( work_mode >= MODE_MAX ) work_mode = MODE_MANUAL;
 
-    if ( prev != work_mode )
-        nvs_param_save_u32(SPACE_NAME, PARAM_NAME_WORKMODE, &work_mode); 
-
-    set_active_kotel( work_mode );
-    prev = work_mode;
+    set_work_mode(work_mode);
 }
 
 void change_work_mode_back()
 {
-    static uint8_t prev = 0;
     if ( display_alert == 1 ) return;
 
-    
     if ( work_mode == MODE_MANUAL ) work_mode = MODE_MAX;
     work_mode--;
 
-    if ( prev != work_mode )
-        nvs_param_save_u32(SPACE_NAME, PARAM_NAME_WORKMODE, &work_mode); 
-
-    set_active_kotel( work_mode );
-    prev = work_mode;
+    set_work_mode( work_mode );
 }
-
 
 // *******************************************************************************
 // ************** ОБРАБОТЧИК ПРЕРЫВАНИЙ MCP23017 *********************************
@@ -2250,15 +2306,16 @@ void webfunc_print_script(char *pbuf)
                     {201,LSENSFL1,"Temperature","temp",&current_temp,NULL}, \
                     {202,LSENSFL0,"Schedule",PARAM_NAME_SCHEDULE,&schedule,NULL}, \
                     {203,LSENSFL0,"TempSet",PARAM_NAME_TEMPSET,&TEMPSET,NULL}, \
-                    {204,LSENSFL0,"FuelPump","fuelpump",&fpump_state,NULL}, \
-                    {205,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRate",  "fuelrate",     get_consump_total,NULL}, \
-					{206,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRateT", "fuelratet",    get_consump_today,NULL}, \
-					{207,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRateY", "fuelratey",    get_consump_prev,NULL}, \
-					{208,LSENSFL0|LSENS32BIT,"FuelTime","fueltime",     &fpump_work_time,NULL}, \
-					{209,LSENSFL0|LSENS32BIT,"FuelTimeT","fueltimet",   &fpump_today_time,NULL}, \
-					{210,LSENSFL0|LSENS32BIT,"FuelTimeY","fueltimey",   &fpump_prev_time,NULL}, \
-					{211,LSENSFL0,"FuelOnCnt","foncnt",&fpump_on_cnt,NULL}, \
-					{212,LSENSFL0|LSENS32BIT,"FuelOnDur","fondur",&fpump_on_duration_prev,NULL}, 
+                    {204,LSENSFL0,"PumpMode",PARAM_NAME_PUMP_MODE,&PUMP_MODE,NULL}, \
+                    {205,LSENSFL0,"FuelPump","fuelpump",&fpump_state,NULL}, \
+                    {206,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRate",  "fuelrate",     get_consump_total,NULL}, \
+					{207,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRateT", "fuelratet",    get_consump_today,NULL}, \
+					{208,LSENSFL3|LSENS32BIT|LSENSFUNS,"FuelRateY", "fuelratey",    get_consump_prev,NULL}, \
+					{209,LSENSFL0|LSENS32BIT,"FuelTime","fueltime",     &fpump_work_time,NULL}, \
+					{210,LSENSFL0|LSENS32BIT,"FuelTimeT","fueltimet",   &fpump_today_time,NULL}, \
+					{211,LSENSFL0|LSENS32BIT,"FuelTimeY","fueltimey",   &fpump_prev_time,NULL}, \
+					{212,LSENSFL0,"FuelOnCnt","foncnt",&fpump_on_cnt,NULL}, \
+					{213,LSENSFL0|LSENS32BIT,"FuelOnDur","fondur",&fpump_on_duration_prev,NULL}, 
 
 
 
@@ -2280,19 +2337,13 @@ void mqtt_receive_data(char *topicBuf,char *dataBuf)
             // событие прихода топика логин/имя_модуля/testtopic
             // обрабатываем полученное значение топика dataBuf , например через atoi
             uint8_t _work_mode = atoi( dataBuf );
-            ESP_LOGI( UTAG, "%s: _work_mode received = %d", __func__, _work_mode );
-            if ( _work_mode >= MODE_MAX || _work_mode == work_mode ) return;
-            
-            work_mode = _work_mode;
-            nvs_param_save_u32(SPACE_NAME, PARAM_NAME_WORKMODE, &work_mode); 
-            set_active_kotel( work_mode );            
+            set_work_mode( _work_mode );          
         }
         else if ( !strcoll( topic, PARAM_NAME_SCHEDULE ) ) 
         { 
             // событие прихода топика логин/имя_модуля/testtopic
             // обрабатываем полученное значение топика dataBuf , например через atoi
             uint8_t _schedule = atoi( dataBuf );
-            ESP_LOGI( UTAG, "%s: _schedule received = %d", __func__, _schedule );
             if ( _schedule == schedule ) return;
 
             if ( _schedule > 1 ) {
@@ -2322,12 +2373,15 @@ void mqtt_receive_data(char *topicBuf,char *dataBuf)
                 TEMPSET = (uint16_t)(atof(dataBuf) * 10);
             }
 
-            ESP_LOGI( UTAG, "%s: TEMPSET received = %d", __func__, TEMPSET );
-
             if ( !schedule ) {
                 THERMO_TEMP_SET(1, TEMPSET);
                 THERMO_TEMP_SET(2, TEMPSET);   
             }          
+        }    
+        else if ( !strcoll( topic, PARAM_NAME_PUMP_MODE ) ) 
+        { 
+            uint8_t _mode = atoi( dataBuf );
+            set_pump_mode( _mode );      
         }        
     }
 }
@@ -2365,6 +2419,7 @@ void startfunc(){
     if ( TEMPSET < 100 || TEMPSET > 300 ) { TEMPSET = 240 ; err = 1; }
 
     if ( BUZZER_GPIO == 0 || BUZZER_GPIO >=255 ) { BUZZER_GPIO = 255 ; err = 1; }
+    if ( PUMP_MODE >= PUMP_MODE_MAX ) { PUMP_MODE = PUMP_MODE_1 ; err = 1; }
 
     if ( err == 1 ) SAVEOPT;
 
@@ -2381,6 +2436,8 @@ void startfunc(){
 
     // читаем сохраненные данные по топливному насосу
     fuel_load_data();
+
+    //nvs_param_load(SPACE_NAME, PARAM_NAME_PUMP_MODE, &pump_mode);
 
     cb_mqtt_funs = mqtt_receive_data;
 
@@ -2409,6 +2466,7 @@ void timerfunc(uint32_t  timersrc) {
     }
 
     show_page( menu_idx );
+
     control_return_water_thermostats();
     
     // вентиляция
@@ -2442,11 +2500,12 @@ void timerfunc(uint32_t  timersrc) {
 void webfunc(char *pbuf) 
 {
     webfunc_print_kotel_data(pbuf);
-
+os_sprintf(HTTPBUFF,"<br>Режим насоса: %d</small>", PUMP_MODE); 
     // SCRIPT
     webfunc_print_script(pbuf);
 
     webfunc_print_fuel_pump_data(pbuf);
 
+    
     os_sprintf(HTTPBUFF,"<br><small>Version: %s</small>", FW_VER); 
 }
