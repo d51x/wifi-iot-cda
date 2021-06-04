@@ -1,8 +1,1 @@
-<b>Flow Pipe: </b>_DSW1_°C<br>
-<b>Return Pipe: </b>_DSW2_°C<br><hr>
-<b>LivingRoom: </b>_D2D0109_°C<br>
-<b>Bathroom: </b>_D2D0117_°C<br><hr>
-<b>Bedroom: </b>_D2D0101_°C<br>
-<b>Child1: </b>_D2D0105_°C<br>
-<b>Child2: </b>_D2D0113_°C<br>
-<hr><b>Street: </b>_D2D0201_°C<hr>
+<b>Flow:</b> _DSW1_°C <b>Return:</b> _DSW2_°C <b>Street: </b>_D2D0201_°C<hr><b>LivingRoom: </b>_D2D0109_°C <b>Bathroom: </b>_D2D0117_°C<hr><b>Bedroom: </b>_D2D0101_°C <b>Child1: </b>_D2D0105_°C <b>Child2: </b>_D2D0113_°C<hr>

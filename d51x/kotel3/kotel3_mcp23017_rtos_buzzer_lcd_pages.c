@@ -1,11 +1,9 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.95"
-
+#define FW_VER "3.103"
 
 /*
 Количество настроек
 Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h), Day(h), BacklightTDelay, Kotel1LED, Kotel2LED, KotelWorkLed, PumpWorkLed, ScheduleLed, VentLed, GlobalTempSet, Buzzer GPIO
-
 */
 
 #define TEMPSET_STEP 1
@@ -27,7 +25,6 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 
 #define BACKLIGHT_TIMEOUT    sensors_param.cfgdes[8] // 30
 
-
 #define KOTEL1_LED_GPIO sensors_param.cfgdes[9]
 #define KOTEL2_LED_GPIO sensors_param.cfgdes[10]
 #define KOTEL_LED_GPIO sensors_param.cfgdes[11]
@@ -38,8 +35,8 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define TEMPSET sensors_param.cfgdes[15]
 #define BUZZER_GPIO sensors_param.cfgdes[16]
 
-#define current_temp        valdes[0]  // устанавливать через интерпретер или mqtt - valdes[0]
-#define street_temp         valdes[1]  // устанавливать через интерпретер или mqtt - valdes[0]
+#define current_temp        valdes[0]  // устанавливать через интерпретер или mqtt
+#define street_temp         valdes[1]  // устанавливать через интерпретер или mqtt
 
 #define VALDES_INDEX_WORK_MODE     2   //  
 #define work_mode           valdes[VALDES_INDEX_WORK_MODE]
@@ -47,9 +44,6 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define VALDES_INDEX_SCHEDULE      3   //  
 #define schedule            valdes[VALDES_INDEX_SCHEDULE]
 #define reset_fuel          valdes[4]
-
-
-
 
 #define flow_temp data1wire[0]
 #define return_temp data1wire[1]
@@ -85,16 +79,9 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define THERMO_TEMP_SET(x,y)  { sensors_param.thermzn[x-1][0] = y; SAVEOPT; }
 #define THERMO_HYST_SET(x,y)  { sensors_param.thermzn[x-1][1] = y; SAVEOPT; }
 
-
-
-// NVSCURRENT_TEMP
 #define SPACE_NAME "d51x"
 #define WORK_MODE_PARAM "workmode"
 #define SCHEDULE_PARAM "schedule"
-
-
-
-
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c" 
 #define BYTE_TO_BINARY(byte)  \
@@ -557,10 +544,10 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 {
 	os_sprintf(HTTPBUFF, "<hr>");
 	
-	os_sprintf(HTTPBUFF, "<b>Fuel Pump:</b> %s &nbsp; <b>count:</b> %d <br>", fpump_state ? "ON" : "OFF", fpump_on_cnt );
+	//os_sprintf(HTTPBUFF, "Fuel Pump: <b>%s</b> &nbsp; <b>count:</b> %d &nbsp; ", fpump_state ? "ON" : "OFF", fpump_on_cnt );
 	//os_sprintf(HTTPBUFF, "<details><summary>");
-    os_sprintf(HTTPBUFF, "<b>PrevDuration:</b> %d:%02d", (fpump_on_duration_prev / 1000) / 60,  (fpump_on_duration_prev / 1000) % 60);
-	os_sprintf(HTTPBUFF, "&nbsp;<b>PrevConsumption:</b> %d.%03d<br>", i_fuel_consump_last / 100000, (i_fuel_consump_last % 100000) / 100);
+    //os_sprintf(HTTPBUFF, "<b>PrevDuration:</b> %d:%02d", (fpump_on_duration_prev / 1000) / 60,  (fpump_on_duration_prev / 1000) % 60);
+	//os_sprintf(HTTPBUFF, "&nbsp;<b>PrevConsumption:</b> %d.%03d<br>", i_fuel_consump_last / 100000, (i_fuel_consump_last % 100000) / 100);
     
     
     //os_sprintf(HTTPBUFF, "</summary>");
@@ -571,26 +558,48 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 	uint32_t hour = (min / 60 % 24);
 	min = min % 60;
 
+    //os_sprintf(HTTPBUFF, "Fuel Pump: <b>%s</b> &nbsp; count: <b>%d</b>", fpump_state ? "ON" : "OFF", fpump_on_cnt );
 	os_sprintf(HTTPBUFF, "<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>"
-							"<tr align='center'>"
+
+                            "<tr align=right>"
+                                "<td>Fuel Pump:</td><td><b>%s</b></td><td>count: <b>%d</b></td>"
+                            "</tr>"
+
+							"<tr align=right>"
 								"<th></th><th>Work time:</th><th>Consumption, L:</th>"
 							"</tr>"
+                            , fpump_state ? "ON" : "OFF", fpump_on_cnt
 				);
 				
 
-	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
-								"<td><b>Now:</b></td><td>%02d:%02d</td><td>%d.%03d</td>"
+	os_sprintf(HTTPBUFF, 	"<tr align=right>"
+								"<td><b>Now:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
 							"</tr>"
-							, (fpump_on_duration / 1000) / 60,  (fpump_on_duration / 1000) % 60
+							, (fpump_on_duration / 1000) / 60 / 60 % 24
+                            , (fpump_on_duration / 1000) / 60,  (fpump_on_duration / 1000) % 60
 							, i_fuel_consump_now / 100000, (i_fuel_consump_now % 100000) / 100
 	);	
+    os_sprintf(HTTPBUFF, "</table>");
 
 	uint32_t _sec = fpump_today_time % 60;
 	uint32_t _min = fpump_today_time / 60;
 	uint32_t _hour = _min / 60;
 	_min = _min % 60;
 
-	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
+os_sprintf(HTTPBUFF, "<details><summary></summary>");
+os_sprintf(HTTPBUFF, "<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>");
+
+	os_sprintf(HTTPBUFF, 	"<tr align=right>"
+								"<td><b>Prev time:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
+							"</tr>"
+							, (fpump_on_duration_prev / 1000) / 60 % 24
+							, (fpump_on_duration_prev / 1000) / 60
+                            , (fpump_on_duration_prev / 1000) % 60
+							, i_fuel_consump_last / 100000
+                            , (i_fuel_consump_last % 100000) / 100
+	);
+
+	os_sprintf(HTTPBUFF, 	"<tr align=right>"
 								"<td><b>Today:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
 							"</tr>"
 							, _hour, _min, _sec
@@ -603,14 +612,14 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 	_hour = _min / 60;
 	_min = _min % 60;
 
-	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
+	os_sprintf(HTTPBUFF, 	"<tr align=right>"
 								"<td><b>Yesterday:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
 							"</tr>"
 							, _hour, _min, _sec
 							, i_fuel_consump_prev / 100000, (i_fuel_consump_prev % 100000) / 100
 	);
 
-	os_sprintf(HTTPBUFF, 	"<tr align='center'>"
+	os_sprintf(HTTPBUFF, 	"<tr align=right>"
 								"<td><b>Total:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
 							"</tr>"
 							, hour, min, sec
@@ -2079,24 +2088,37 @@ void control_indications()
 
 void webfunc_print_kotel_data(char *pbuf)
 {
-    os_sprintf(HTTPBUFF,"<table><tr><td>Mode:</td><td>");
+    os_sprintf(HTTPBUFF,"<table>");
+    
+    os_sprintf(HTTPBUFF,"<tr><td>Temperature:</td><td><b>%d.%d °C</b></td></tr>", current_temp / 10, current_temp % 10); 
+
+    os_sprintf(HTTPBUFF, "<tr>"
+                        "<td>Mode:</td>");
  
-    #define html_button_mode "<a href='#' onclick='wm(%d)'><div class='g_%d k kk fll wm' id='v%d'>%s</div></a>"
+    #define html_button_mode "<td><a href='#' onclick='wm(%d)'><div class='g_%d k kk fll wm' id='v%d'>%s</div></a></td>"
+
     os_sprintf(HTTPBUFF, html_button_mode, MODE_MANUAL, work_mode == MODE_MANUAL,   MODE_MANUAL, "Manual");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_AUTO,   work_mode == MODE_AUTO,     MODE_AUTO, "Auto");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL1, work_mode == MODE_KOTEL1,   MODE_KOTEL1, "Kotel1");
     os_sprintf(HTTPBUFF, html_button_mode, MODE_KOTEL2, work_mode == MODE_KOTEL2,   MODE_KOTEL2, "Kotel2");
-    os_sprintf(HTTPBUFF,"</td></tr><tr><td>Schedule:</td><td>");
+    os_sprintf(HTTPBUFF,"</tr><tr>"
+                        "<td>Schedule:</td>");
 
-    os_sprintf(HTTPBUFF, "<a id='ushd' href='#' data-val='%d' onclick='schd(this.dataset.val)'><div class='g_%d k kk fll' id='sch' data-text='%s'>%s</div></a><br>"
+    os_sprintf(HTTPBUFF, "<td><a id='ushd' href='#' data-val='%d' onclick='schd(this.dataset.val)'><div class='g_%d k kk fll' id='sch' data-text='%s'>%s</div></a></td>"
                         , !schedule
                         , schedule
                         , schedule ? "Off" : "On" //обратное значение, подставится после нажатия
                         , schedule ? "On" : "Off"
                         );   
 
-    os_sprintf(HTTPBUFF,"</td></tr>");
-    os_sprintf(HTTPBUFF,"<tr><td>Temperature:</td><td><b>%d.%d °C</b></td></tr>", current_temp / 10, current_temp % 10); 
+    os_sprintf(HTTPBUFF,"<td colspan=2 align=right>%s tempset:</td>"
+                        "<td><b>%d.%d °C</b></td>"
+                        "</tr>"
+                        , schedule ? "Schedule" : "Global"
+                        , schedule ? (shed_tempset / 10) : TEMPSET / 10
+                        , schedule ? (shed_tempset % 10) : TEMPSET % 10
+                );   
+
     if ( schedule ) {
         char weeks[32] = ""; //"#1 hh:mm Mo,Tu,We,Th,Fr,Sa,Su"
         if ( schedule_id > -1 && schedule_id < maxscher )
@@ -2114,10 +2136,8 @@ void webfunc_print_kotel_data(char *pbuf)
                 , BIT_CHECK( sensors_param.schweek[schedule_id], 6 ) ? "Su " : ""
             );
         }
-        os_sprintf(HTTPBUFF,"<tr><td>Schedule tempset:</td><td><b>%d.%d °C</b> [%s]</td></tr>"
-                        , shed_tempset / 10, shed_tempset % 10, weeks);     
-    } else {
-        os_sprintf(HTTPBUFF,"<tr><td>Global tempset:</td><td><b>%d.%d °C</b></td></tr>", TEMPSET / 10, TEMPSET % 10);     
+         os_sprintf(HTTPBUFF, "<tr><td colspan=5 align=right>[%s]</td></tr>", weeks);
+  
     }
     
     os_sprintf(HTTPBUFF,"</table>");
@@ -2132,7 +2152,7 @@ void webfunc_print_script(char *pbuf)
                         "{"
                             "let e=document.createElement('style');"
                             "e.innerText='"
-                                                ".kk{border-radius:4px;margin:-2px 2px 8px 4px;width:60px;}"
+                                                ".kk{border-radius:4px;margin:2px;width:60px;}"
                                                 "';"
                             "document.head.appendChild(e)"
                         "};"
@@ -2306,5 +2326,5 @@ void webfunc(char *pbuf)
 
     webfunc_print_fuel_pump_data(pbuf);
 
-    os_sprintf(HTTPBUFF,"<small>Version: %s</small>", FW_VER); 
+    os_sprintf(HTTPBUFF,"<br><small>Version: %s</small>", FW_VER); 
 }
