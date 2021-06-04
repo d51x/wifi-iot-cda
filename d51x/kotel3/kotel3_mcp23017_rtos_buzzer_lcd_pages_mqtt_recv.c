@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "4.04"
+#define FW_VER "4.11"
 
 /*
 Количество настроек
@@ -9,7 +9,7 @@ Kotel1 gpio, Kotel2 gpio, Pump1 gpio, Pump2 gpio, ESC gpio, Vent gpio, Night(h),
 #define TEMPSET_STEP 1
 #define HYST_STEP 1
 #define TEMPSET_MIN 100
-#define TEMPSET_MAX 300
+#define TEMPSET_MAX 400
 #define HYST_MIN 1
 #define HYST_MAX 50
 
@@ -111,7 +111,7 @@ typedef enum {
     , PAGE_MENU_SCHEDULE
     , PAGE_MENU_TEMPSET
     , PAGE_MENU_HYST
-    , PAGE_MENU_PUMP_TEMP
+    , PAGE_MENU_PUMP_SETTINGS
     , PAGE_MENU_VERSION
     , PAGE_MAX
 } menu_e;
@@ -144,6 +144,19 @@ TimerHandle_t  show_alert_timer;
 
 uint32_t last_key_press = 0;
 #define MENU_EXIT_TIMEOUT 60000 // 10 sec
+
+typedef enum {
+    PUMP_MODE_NONE, // * 0. не управляем реле насоса
+    PUMP_MODE_1,    // * 1. реле насоса вкл/выкл по реле котла
+    PUMP_MODE_2,    // * 2. реле насоса вкл по реле котла, выкл через Х минут, после выключения реле котла
+    PUMP_MODE_3,    // * 3. реле насоса вкл по реле котла, выкл по температуре обратки
+    PUMP_MODE_MAX
+} pump_mode_e;
+
+//pump_mode_e pump_mode;
+
+#define PUMP1_OFF_TIMEOUT    PUMP_OFF_TIMEOUT  // seconds
+#define PUMP2_OFF_TIMEOUT    PUMP_OFF_TIMEOUT  // seconds
 
 // ******************************************************************************
 // ********** ФУНКЦИИ ДЛЯ РАБОТЫ С NVS *****************************************
@@ -819,6 +832,10 @@ uint8_t lcd_splash = 1;
 #define LCD_KOTEL1_PAGE_LINES_CNT 10
 uint8_t lcd_kotel1_page_line = 0;
 
+#define LCD_PUMP_OPTIONS 3
+uint8_t lcd_pump_options = 0;
+uint8_t lcd_pump_in_menu = 0;
+
 void backlight_timer_cb(xTimerHandle tmr)   // rtos
 {
     uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
@@ -1289,19 +1306,40 @@ void show_page_hyst()
     lcd_print(2, str);
 }
 
-void show_pump_tempset()
+void show_pump_settings()
 {
     char str[30];
 
-    lcd_print(0, "*** PUMP TEMPSET ***");
+    lcd_print(0, "*** PUMP SETTINGS **");
 
-    memset(str, SYMBOL_SPACE, 21);
-    lcd_print(1, str);    
+    //memset(str, SYMBOL_SPACE, 21);
+    char smode[13] = "";
+    if ( PUMP_MODE == PUMP_MODE_NONE)   strcat(smode, "manual off");
+    else if ( PUMP_MODE == PUMP_MODE_1) strcat(smode, "relay off");
+    else if ( PUMP_MODE == PUMP_MODE_2) strcat(smode, "delay off");
+    else if ( PUMP_MODE == PUMP_MODE_3) strcat(smode, "T return off");
 
-    snprintf(str, 21, "  Setpoint:    %2d.%1d%c", THERMO_SETPOINT(3) / 10, THERMO_SETPOINT(3) % 10, SYMBOL_DEGREE);
+    static uint32_t ii = 0;
+    ii++;
+    if ( lcd_pump_options == 0 && lcd_pump_in_menu && ( ii % 2 == 0) ) {
+        snprintf(str, 21, "%sMode: %13s", " ", " "); 
+    } else {
+        snprintf(str, 21, "%sMode: %13s", lcd_pump_options == 0 ? ">" : " ", smode);    
+    }
+    lcd_print(1, str);  
+
+    if ( lcd_pump_options == 1 && lcd_pump_in_menu && ( ii % 2 == 0) ) {
+        snprintf(str, 21, "%sSetpoint:     %2s.%1s%c", " ", "  ", " ", SYMBOL_DEGREE);       
+    } else {
+        snprintf(str, 21, "%sSetpoint:     %2d.%1d%c", lcd_pump_options == 1 ? ">" : " ", THERMO_SETPOINT(3) / 10, THERMO_SETPOINT(3) % 10, SYMBOL_DEGREE);
+    }  
     lcd_print(2, str);  
 
-    snprintf(str, 21, "Hysteresis:    %2d.%1d%c", THERMO_HYSTERESIS(3) / 10, THERMO_HYSTERESIS(3) % 10, SYMBOL_DEGREE);
+    if ( lcd_pump_options == 2 && lcd_pump_in_menu && ( ii % 2 == 0) ) {
+        snprintf(str, 21, "%sHysteresis:   %2s.%1s%c", " ", "  ", " ", SYMBOL_DEGREE);      
+    } else {
+        snprintf(str, 21, "%sHysteresis:   %2d.%1d%c", lcd_pump_options == 2 ? ">" : " ", THERMO_HYSTERESIS(3) / 10, THERMO_HYSTERESIS(3) % 10, SYMBOL_DEGREE);
+    }
     lcd_print(3, str);      
 }
 
@@ -1366,8 +1404,8 @@ void show_page(uint8_t idx)
             show_page_hyst();
             break;
 
-        case PAGE_MENU_PUMP_TEMP:
-            show_pump_tempset();
+        case PAGE_MENU_PUMP_SETTINGS:
+            show_pump_settings();
             break;
 
         case PAGE_MENU_VERSION:
@@ -1440,8 +1478,63 @@ void hyst_inc()
     THERMO_HYST_SET(2, hyst);
 }
 
-void pump_tempset_dec(){}
-void pump_tempset_inc(){}
+void pump_mode_dec(){
+    if ( PUMP_MODE > 0 ) PUMP_MODE--;
+}
+
+void pump_mode_inc(){
+    PUMP_MODE++;
+  if ( PUMP_MODE >= PUMP_MODE_MAX ) PUMP_MODE = PUMP_MODE_MAX - 1;
+}
+
+void pump_tempset_dec(){
+    uint16_t setpoint = THERMO_SETPOINT(3);
+    setpoint -= TEMPSET_STEP;
+
+    if ( setpoint < TEMPSET_MIN ) {
+        setpoint = TEMPSET_MIN;
+    } 
+
+    THERMO_TEMP_SET(3, setpoint);
+    THERMO_TEMP_SET(4, setpoint);    
+}
+
+void pump_tempset_inc(){
+    uint16_t setpoint = THERMO_SETPOINT(3);
+    setpoint += TEMPSET_STEP;
+
+    if ( setpoint > TEMPSET_MAX ) {
+        setpoint = TEMPSET_MAX;
+    } 
+
+    THERMO_TEMP_SET(3, setpoint);
+    THERMO_TEMP_SET(4, setpoint);    
+}
+
+void pump_hyst_dec(){
+    uint16_t hyst = THERMO_HYSTERESIS(3);
+    hyst -= HYST_STEP;
+
+    if ( hyst < HYST_MIN ) {
+        hyst = HYST_MIN;
+    } 
+
+    THERMO_HYST_SET(3, hyst);
+    THERMO_HYST_SET(4, hyst);
+}
+
+void pump_hyst_inc(){
+    uint16_t hyst = THERMO_HYSTERESIS(3);
+    hyst += HYST_STEP;
+
+    if ( hyst > HYST_MAX ) {
+        hyst = HYST_MAX;
+    } 
+
+    THERMO_HYST_SET(3, hyst);
+    THERMO_HYST_SET(4, hyst);    
+}
+
 
 void switch_schedule()
 {
@@ -1510,18 +1603,6 @@ void set_tempset_by_schedule(uint8_t _schedule)
     
 }
 
-typedef enum {
-    PUMP_MODE_NONE, // * 0. не управляем реле насоса
-    PUMP_MODE_1,    // * 1. реле насоса вкл/выкл по реле котла
-    PUMP_MODE_2,    // * 2. реле насоса вкл по реле котла, выкл через Х минут, после выключения реле котла
-    PUMP_MODE_3,    // * 3. реле насоса вкл по реле котла, выкл по температуре обратки
-    PUMP_MODE_MAX
-} pump_mode_e;
-
-//pump_mode_e pump_mode;
-
-#define PUMP1_OFF_TIMEOUT    PUMP_OFF_TIMEOUT  // seconds
-#define PUMP2_OFF_TIMEOUT    PUMP_OFF_TIMEOUT  // seconds
 
 //#define pump_mode PUMP_MODE
 #define  PARAM_NAME_PUMP_MODE "pumpmode"
@@ -1539,19 +1620,25 @@ void control_return_water_thermostats()
     
     // управление термостатами воды
     // включаем насос всегда при включении реле котла
-    if ( GPIO_ALL_GET(KOTEL1_GPIO) ) GPIO_ALL( PUMP1_GPIO, 1);
-    if ( GPIO_ALL_GET(KOTEL2_GPIO) ) GPIO_ALL( PUMP2_GPIO, 1);
 
     // выключаем по режиму работы
     if ( PUMP_MODE == PUMP_MODE_1 )
     {
         // * 1. реле насоса вкл/выкл по реле котла
-        if ( !GPIO_ALL_GET(KOTEL1_GPIO) ) GPIO_ALL( PUMP1_GPIO, 0);
-        if ( !GPIO_ALL_GET(KOTEL2_GPIO) ) GPIO_ALL( PUMP2_GPIO, 0);
+        if ( THERMO_STATE(3) ) THERMO_OFF(3);
+        if ( THERMO_STATE(4) ) THERMO_OFF(4);
+        GPIO_ALL( PUMP1_GPIO, GPIO_ALL_GET(KOTEL1_GPIO));
+        GPIO_ALL( PUMP2_GPIO, GPIO_ALL_GET(KOTEL2_GPIO));  
     }
     else if ( PUMP_MODE == PUMP_MODE_2 )
     {
         // * 2. реле насоса вкл по реле котла, выкл через Х минут, после выключения реле котла
+        if ( THERMO_STATE(3) ) THERMO_OFF(3);
+        if ( THERMO_STATE(4) ) THERMO_OFF(4);
+
+        if ( GPIO_ALL_GET(KOTEL1_GPIO) ) GPIO_ALL( PUMP1_GPIO, 1);
+        if ( GPIO_ALL_GET(KOTEL2_GPIO) ) GPIO_ALL( PUMP2_GPIO, 1);     
+
         static uint32_t t1, t2 = 0;
 
         if ( !GPIO_ALL_GET(KOTEL1_GPIO) && ( millis() - t1 > PUMP1_OFF_TIMEOUT*1000) ) {
@@ -1566,8 +1653,9 @@ void control_return_water_thermostats()
     }
     else if ( PUMP_MODE == PUMP_MODE_3 )
     {
-        if ( GPIO_ALL_GET(KOTEL1_GPIO) ) THERMO_ON(3);
-        if ( GPIO_ALL_GET(KOTEL2_GPIO) ) THERMO_ON(4);
+        // при температуре между нижней и верхней границей постоянно вкл - выкл
+        if ( GPIO_ALL_GET(KOTEL1_GPIO) && !THERMO_STATE(3)) THERMO_ON(3);
+        if ( GPIO_ALL_GET(KOTEL2_GPIO) && !THERMO_STATE(4)) THERMO_ON(4);
 
         // * 3. реле насоса вкл по реле котла, выкл по температуре обратки
         if ( !GPIO_ALL_GET(KOTEL1_GPIO) ) {
@@ -1882,8 +1970,22 @@ void button1_short_press(void *args, uint8_t *state)
         case PAGE_MENU_HYST:
             hyst_dec();
             break;
-        case PAGE_MENU_PUMP_TEMP:
-            pump_tempset_dec();
+        case PAGE_MENU_PUMP_SETTINGS:
+            if ( lcd_pump_in_menu == 0 ) {
+                lcd_pump_options++;
+                if ( lcd_pump_options > LCD_PUMP_OPTIONS-1 ) lcd_pump_options = 0;
+            } else {
+                // change 
+                if ( lcd_pump_options == 0 ) {
+                    // change pump mode
+                    pump_mode_dec();
+                } else if ( lcd_pump_options == 1) {
+                    pump_tempset_dec();
+                } else if ( lcd_pump_options == 2 ) {
+                    pump_hyst_dec();
+                }
+            }
+            
             break;
         case PAGE_MENU_VERSION:
             break;
@@ -1918,7 +2020,7 @@ void button1_long_press(void *args, uint8_t *state)
             break;
         case PAGE_MENU_HYST:
             break;
-        case PAGE_MENU_PUMP_TEMP:
+        case PAGE_MENU_PUMP_SETTINGS:
             break;
         case PAGE_MENU_VERSION:
             break;
@@ -1974,8 +2076,19 @@ void button2_short_press(uint8_t pin, uint8_t *state)
         case PAGE_MENU_HYST:
             hyst_inc();
             break;
-        case PAGE_MENU_PUMP_TEMP:
-            pump_tempset_inc();
+        case PAGE_MENU_PUMP_SETTINGS:
+            // enter to menu    
+            if ( lcd_pump_in_menu )
+            {
+                if ( lcd_pump_options == 0 ) {
+                    // change pump mode
+                    pump_mode_inc();
+                } else if ( lcd_pump_options == 1) {
+                    pump_tempset_inc();
+                } else if ( lcd_pump_options == 2 ) {
+                    pump_hyst_inc();
+                }
+            }
             break;
         case PAGE_MENU_VERSION:
             break;
@@ -1992,32 +2105,14 @@ void button2_long_press(uint8_t pin, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     buzzer( BUZZER_BEEP_DOUBLE_SHORT );
 
-    switch ( menu_idx ) {
-        case PAGE_MAIN:
+    if ( menu_idx == PAGE_MAIN) {
             GPIO_INVERT(ESC_GPIO);
             char str[21];
             snprintf(str, 21, "  Night mode is %3s ", GPIO_ALL_GET( ESC_GPIO ) ? "ON " : "OFF");
-            show_display_alert("                    ", str, NULL);             
-            break;
-        case PAGE_KOTEL1_RATE:
-            break;
-        case PAGE_KOTEL2_RATE:
-            break;
-        case PAGE_MENU_WORKMODE:
-            break;
-        case PAGE_MENU_SCHEDULE:
-            break;
-        case PAGE_MENU_TEMPSET:
-            break;
-        case PAGE_MENU_HYST:
-            break;
-        case PAGE_MENU_PUMP_TEMP:
-            break;
-        case PAGE_MENU_VERSION:
-            break;
-        default:
-            break;
-    }  
+            show_display_alert("                    ", str, NULL);      
+    } else {
+
+    }      
 
     last_key_press = millis();
 }
@@ -2029,24 +2124,21 @@ void button3_short_press(uint8_t pin, uint8_t *state)
     //if ( backlight == 0 && sensors_param.lcden > 0) return;
     buzzer( BUZZER_BEEP_SHORT );
 
-    switch ( menu_idx ) {
-        case PAGE_MAIN:
-            GPIO_INVERT( VENT_GPIO );
-            char str[21];
-            snprintf(str, 21, " Ventilation is %3s ", GPIO_ALL_GET( VENT_GPIO ) ? "ON " : "OFF");
-            show_display_alert("                    ", str, NULL);
-            break;
-        case PAGE_KOTEL1_RATE:
-        case PAGE_KOTEL2_RATE:
-        case PAGE_MENU_WORKMODE:
-        case PAGE_MENU_SCHEDULE:
-        case PAGE_MENU_TEMPSET:
-        case PAGE_MENU_HYST:
-        case PAGE_MENU_PUMP_TEMP:
-        case PAGE_MENU_VERSION:
-        default:
+    if ( menu_idx == PAGE_MAIN) {
+        GPIO_INVERT( VENT_GPIO );
+        char str[21];
+        snprintf(str, 21, " Ventilation is %3s ", GPIO_ALL_GET( VENT_GPIO ) ? "ON " : "OFF");
+        show_display_alert("                    ", str, NULL);
+    } else {
+        if ( menu_idx == PAGE_MENU_PUMP_SETTINGS && lcd_pump_in_menu )
+        {
+
+        }
+        else
+        {
+            lcd_pump_options = 0;
             menu_prev();
-            break;
+        }    
     }
 
     last_key_press = millis();
@@ -2058,31 +2150,15 @@ void button3_long_press(uint8_t pin, uint8_t *state)
     uint8_t backlight = LCD_BACKLIGHT_STATE;
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     buzzer( BUZZER_BEEP_DOUBLE_SHORT );    
-    switch ( menu_idx ) {
-        case PAGE_MAIN:
+    if ( menu_idx == PAGE_MAIN) {
             switch_schedule();
             char str[21];
             snprintf(str, 21, "   Schedule is %3s  ", schedule ? "ON " : "OFF");
             show_display_alert("                    ", str, NULL);            
-            break;
-        case PAGE_KOTEL1_RATE:
-            break;
-        case PAGE_KOTEL2_RATE:
-            break;
-        case PAGE_MENU_WORKMODE:
-            break;
-        case PAGE_MENU_SCHEDULE:
-            break;
-        case PAGE_MENU_TEMPSET:
-            break;
-        case PAGE_MENU_HYST:
-            break;
-        case PAGE_MENU_PUMP_TEMP:
-            break;
-        case PAGE_MENU_VERSION:
-            break;
-        default:
-            break;
+    } else if ( menu_idx == PAGE_MENU_PUMP_SETTINGS ) {
+        lcd_pump_in_menu = 1- lcd_pump_in_menu;
+    } else {
+
     }
     last_key_press = millis();
 }
@@ -2092,7 +2168,15 @@ void button4_short_press(uint8_t pin, uint8_t *state)
     uint8_t backlight = LCD_BACKLIGHT_STATE;
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
     //if ( backlight == 0 && sensors_param.lcden > 0) return;
-    menu_next();
+
+    if ( menu_idx == PAGE_MENU_PUMP_SETTINGS && lcd_pump_in_menu )
+    {
+
+    } else {
+        lcd_pump_options = 0;
+        menu_next();        
+    }
+
     buzzer( BUZZER_BEEP_SHORT );
     last_key_press = millis();
 }
@@ -2102,25 +2186,15 @@ void button4_long_press(uint8_t pin, uint8_t *state)
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL); 
     buzzer( BUZZER_BEEP_DOUBLE_SHORT );  
 
-    switch ( menu_idx ) {
-        case PAGE_MAIN:
+    if ( menu_idx == PAGE_MAIN )
+    {
             //  PUMP's off manualy!!!  TODO off pump termostats (3,4)
-            GPIO_ALL( PUMP1_GPIO, 0);
-            GPIO_ALL( PUMP2_GPIO, 0);
-            break;
-        case PAGE_KOTEL1_RATE:
-        case PAGE_KOTEL2_RATE:
-        case PAGE_MENU_WORKMODE:
-        case PAGE_MENU_SCHEDULE:
-        case PAGE_MENU_TEMPSET:
-        case PAGE_MENU_HYST:
-        case PAGE_MENU_PUMP_TEMP:
-        case PAGE_MENU_VERSION:
-        default:
-            buzzer( BUZZER_BEEP_DOUBLE_SHORT ); 
-            menu_idx = PAGE_MAIN;
-            break;
-    }
+        GPIO_ALL( PUMP1_GPIO, 0);
+        GPIO_ALL( PUMP2_GPIO, 0);
+    } else {
+        buzzer( BUZZER_BEEP_DOUBLE_SHORT ); 
+        menu_idx = PAGE_MAIN;     
+    } 
 
     last_key_press = millis(); 
 }
@@ -2458,6 +2532,8 @@ void timerfunc(uint32_t  timersrc) {
     if ( menu_idx != PAGE_MAIN && ( millis() - last_key_press >= MENU_EXIT_TIMEOUT )) 
     {
         menu_idx = PAGE_MAIN;
+        lcd_pump_in_menu = 0;
+        lcd_pump_options = 0;
     }
 
     // управление уставками по расписанию
