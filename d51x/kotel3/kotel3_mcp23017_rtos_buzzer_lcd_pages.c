@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.91"
+#define FW_VER "3.95"
 
 
 /*
@@ -636,32 +636,57 @@ void webfunc_print_fuel_pump_data(char *pbuf)
     #define LCD_BACKLIGHT_STATE 1
 #endif
 
-const uint8_t lcd_char_arrow_up[8] =      // кодируем символ градуса
+// const uint8_t lcd_char_arrow_up[8] =      // кодируем символ градуса
+// {
+//   0b00000,
+//   0b00100,
+//   0b01110,
+//   0b10101,
+//   0b00100,
+//   0b00100,
+//   0b00100,
+//   0b00000,
+// }; 
+// #define SYMBOL_ARROW_UP 0x02
+
+const uint8_t lcd_char_moon[8] =      // кодируем символ градуса
 {
-  0b00000,
+  0b11100,
+  0b00110,
+  0b00011,
+  0b00011,
+  0b00011,
+  0b00110,
+  0b11100,
+  0b00000,  
+}; 
+#define SYMBOL_MOON 0x02
+
+// const uint8_t lcd_char_arrow_down[8] =      // кодируем символ градуса
+// {
+//   0b00000,
+//   0b00100,
+//   0b00100,
+//   0b00100,
+//   0b10101,
+//   0b01110,
+//   0b00100,
+//   0b00000,
+// }; 
+// #define SYMBOL_ARROW_DOWN 0x03
+
+const uint8_t lcd_char_sun[8] =      // кодируем символ градуса
+{
   0b00100,
+  0b10101,
+  0b01110,
+  0b11111,
   0b01110,
   0b10101,
   0b00100,
-  0b00100,
-  0b00100,
   0b00000,
 }; 
-#define SYMBOL_ARROW_UP 0x02
-
-const uint8_t lcd_char_arrow_down[8] =      // кодируем символ градуса
-{
-  0b00000,
-  0b00100,
-  0b00100,
-  0b00100,
-  0b10101,
-  0b01110,
-  0b00100,
-  0b00000,
-}; 
-#define SYMBOL_ARROW_DOWN 0x03
-
+#define SYMBOL_SUN 0x03
 
 const uint8_t lcd_char_vent_part1[8] =      // кодируем символ градуса
 {
@@ -941,7 +966,7 @@ void show_main_page()
                 , ( ii % time_delay > 0) ? time_loc.hour : time_loc.day
                 , ( ii % time_delay > 0) ? ( ii % 2 ? ":" : " ") : "."
                 , ( ii % time_delay > 0) ? time_loc.min : time_loc.month
-                , SYMBOL_ARROW_UP //SYMBOL_ARROW_RIGHT            
+                , SYMBOL_ARROW_RIGHT            
                 , flow_temp / 100
                 , (flow_temp % 100)/10
                 , SYMBOL_DEGREE  
@@ -991,7 +1016,7 @@ void show_main_page()
     
     snprintf(str, 21, line2_pattern
                 , smode
-                , SYMBOL_ARROW_DOWN   //SYMBOL_ARROW_LEFT       
+                , SYMBOL_ARROW_LEFT       
                 , return_temp / 100
                 , (return_temp % 100)/10
                 , SYMBOL_DEGREE  
@@ -1033,14 +1058,15 @@ void show_main_page()
 
      // V	e	n	t	:	O	F	F					S	t	:	2	2	.	2	°
     //#define line4_pattern "Vent:%3s    %2s:%2d.%1d%c"
-    #define line4_pattern "%c%c%3s %5s %2s:%2d.%1d%c"
+    #define line4_pattern "%c%c%3s %c%3s  T%c:%2d.%1d%c"
 
     snprintf(str, 21, line4_pattern
                 , SYMBOL_VENT_PART1
                 , SYMBOL_VENT_PART2
                 , GPIO_ALL_GET( VENT_GPIO ) ? "ON " : "OFF"
-                , GPIO_ALL_GET( ESC_GPIO ) ? "NIGHT" : "     "
-                , show_cur_temp ?  "St" : "T#"
+                , SYMBOL_MOON
+                , GPIO_ALL_GET( ESC_GPIO ) ? "ON " : "OFF"
+                , show_cur_temp ?  SYMBOL_SUN : '#'
                 , show_cur_temp ? ( street_temp / 10 ) : ( current_temp / 10 )
                 , show_cur_temp ? ( street_temp % 10 ) : ( current_temp % 10 )
                 , SYMBOL_DEGREE);
@@ -1083,8 +1109,10 @@ void lcd_show_splash(uint8_t timeout)
 
 void lcd_init2()
 {
-    LCDI2C_createChar( SYMBOL_ARROW_UP, lcd_char_arrow_up );    
-    LCDI2C_createChar( SYMBOL_ARROW_DOWN, lcd_char_arrow_down );
+    //LCDI2C_createChar( SYMBOL_ARROW_UP, lcd_char_arrow_up );    
+    //LCDI2C_createChar( SYMBOL_ARROW_DOWN, lcd_char_arrow_down );
+    LCDI2C_createChar( SYMBOL_MOON, lcd_char_moon );
+    LCDI2C_createChar( SYMBOL_SUN, lcd_char_sun );
     LCDI2C_createChar( SYMBOL_VENT_PART1, lcd_char_vent_part1 );
     LCDI2C_createChar( SYMBOL_VENT_PART2, lcd_char_vent_part2 );
     LCDI2C_createChar( SYMBOL_SCHEDULE_PART1, lcd_char_schedule_part1 );
@@ -1184,10 +1212,14 @@ void show_page_tempset()
 
     memset(str, SYMBOL_SPACE, 21);
     lcd_print(1, str);
-    lcd_print(3, str);
+    
 
-    snprintf(str, 21, "  Setpoint:    %2d.%1d%c", THERMO_SETPOINT(1) / 10, THERMO_SETPOINT(1) % 10, SYMBOL_DEGREE);
+    //snprintf(str, 21, "  Setpoint:    %2d.%1d%c", THERMO_SETPOINT(1) / 10, THERMO_SETPOINT(1) % 10, SYMBOL_DEGREE);
+    snprintf(str, 21, "Setpoint:      %2d.%1d%c", TEMPSET / 10, TEMPSET % 10, SYMBOL_DEGREE);
     lcd_print(2, str);
+
+    snprintf(str, 21, "Schedule:        %3s", schedule ? " ON" : "OFF");
+    lcd_print(3, str);
 }
 
 void show_page_hyst()
@@ -1301,7 +1333,7 @@ void show_page(uint8_t idx)
 // ********************************************************************************
 // ************ ФУНКЦИИ УПРАВЛЕНИЯ ТЕРМОСТАТАМИ И УСТАВКАМИ ***********************
 // ********************************************************************************
-void tempset_dec()
+void tempset_dec(uint8_t _schedule)
 {
     //uint16_t setpoint = THERMO_SETPOINT(1);
     TEMPSET -= TEMPSET_STEP;
@@ -1310,11 +1342,12 @@ void tempset_dec()
         TEMPSET = TEMPSET_MIN;
     } 
 
+    if ( _schedule ) return;
     THERMO_TEMP_SET(1, TEMPSET);
     THERMO_TEMP_SET(2, TEMPSET);
 }
 
-void tempset_inc()
+void tempset_inc(uint8_t _schedule)
 {
     //uint16_t setpoint = THERMO_SETPOINT(1);
     TEMPSET += TEMPSET_STEP;
@@ -1323,6 +1356,7 @@ void tempset_inc()
         TEMPSET = TEMPSET_MAX;
     } 
 
+    if ( _schedule ) return;
     THERMO_TEMP_SET(1, TEMPSET);
     THERMO_TEMP_SET(2, TEMPSET);
 }
@@ -1714,7 +1748,7 @@ void button1_short_press(void *args, uint8_t *state)
                         buzzer( BUZZER_BEEP_ERROR );
                         show_display_alert("   *** ERROR ***    ", "Schedule is enabled. Can't change temperature setpiont!", NULL);
                     } else {
-                        tempset_dec();
+                        tempset_dec(schedule);
                         show_display_alert(NULL, NULL, show_page_tempset);
                     } 
                 } else {
@@ -1734,7 +1768,7 @@ void button1_short_press(void *args, uint8_t *state)
             switch_schedule();
             break;
         case PAGE_MENU_TEMPSET:
-            tempset_dec();
+            tempset_dec(schedule);
             break;
         case PAGE_MENU_HYST:
             hyst_dec();
@@ -1801,7 +1835,7 @@ void button2_short_press(uint8_t pin, uint8_t *state)
                         buzzer( BUZZER_BEEP_ERROR );
                         show_display_alert("   *** ERROR ***    ", "Schedule is enabled. Can't change temperature setpiont!", NULL);
                     } else {
-                        tempset_inc();
+                        tempset_inc(schedule);
                         show_display_alert(NULL, NULL, show_page_tempset);
                     } 
                 } else {
@@ -1821,7 +1855,7 @@ void button2_short_press(uint8_t pin, uint8_t *state)
             switch_schedule();
             break;
         case PAGE_MENU_TEMPSET:
-            tempset_inc();
+            tempset_inc(schedule);
             break;
         case PAGE_MENU_HYST:
             hyst_inc();
