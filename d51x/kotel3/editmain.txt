@@ -1,1 +1,1 @@
-<b>Flow:</b> _DSW1_°C <b>Return:</b> _DSW2_°C <b>Street: </b>_D2D0201_°C<hr><b>LivingRoom: </b>_D2D0109_°C <b>Bathroom: </b>_D2D0117_°C<hr><b>Bedroom: </b>_D2D0101_°C <b>Child1: </b>_D2D0105_°C <b>Child2: </b>_D2D0113_°C<hr>
+Flow: <b>_DSW1_°</b>C Return: <b>_DSW2_°</b>C Street: <b>_D2D0201_°</b>C<hr>1. LivingRoom: <b>_D2D0109_°</b>C Bathroom: <b>_D2D0117_°</b>C<hr>2. Bedroom: <b>_D2D0101_°</b>C Child1: <b>_D2D0105_°</b>C Child2: <b>_D2D0113_°</b>C<hr>

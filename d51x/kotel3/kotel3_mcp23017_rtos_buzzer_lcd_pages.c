@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.103"
+#define FW_VER "3.107"
 
 /*
 Количество настроек
@@ -140,7 +140,7 @@ TimerHandle_t  show_alert_timer;
 #define SHOW_ALERT_TIMEOUT 5000
 
 uint32_t last_key_press = 0;
-#define MENU_EXIT_TIMEOUT 10000 // 10 sec
+#define MENU_EXIT_TIMEOUT 60000 // 10 sec
 
 // ******************************************************************************
 // ********** ФУНКЦИИ ДЛЯ РАБОТЫ С NVS *****************************************
@@ -575,9 +575,11 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 	os_sprintf(HTTPBUFF, 	"<tr align=right>"
 								"<td><b>Now:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
 							"</tr>"
-							, (fpump_on_duration / 1000) / 60 / 60 % 24
-                            , (fpump_on_duration / 1000) / 60,  (fpump_on_duration / 1000) % 60
-							, i_fuel_consump_now / 100000, (i_fuel_consump_now % 100000) / 100
+							, (fpump_on_duration  / 1000 ) / 60 / 60
+                            , (fpump_on_duration  / 1000 ) / 60
+                            , (fpump_on_duration  / 1000 ) % 60
+							, i_fuel_consump_now / 100000
+                            , (i_fuel_consump_now % 100000) / 100
 	);	
     os_sprintf(HTTPBUFF, "</table>");
 
@@ -586,15 +588,15 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 	uint32_t _hour = _min / 60;
 	_min = _min % 60;
 
-os_sprintf(HTTPBUFF, "<details><summary></summary>");
-os_sprintf(HTTPBUFF, "<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>");
+    os_sprintf(HTTPBUFF, "<details><summary></summary>");
+    os_sprintf(HTTPBUFF, "<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>");
 
 	os_sprintf(HTTPBUFF, 	"<tr align=right>"
 								"<td><b>Prev time:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
 							"</tr>"
-							, (fpump_on_duration_prev / 1000) / 60 % 24
-							, (fpump_on_duration_prev / 1000) / 60
-                            , (fpump_on_duration_prev / 1000) % 60
+							, (fpump_on_duration_prev / 1000 ) / 60 / 60 
+							, (fpump_on_duration_prev / 1000 ) / 60
+                            , (fpump_on_duration_prev / 1000 ) % 60
 							, i_fuel_consump_last / 100000
                             , (i_fuel_consump_last % 100000) / 100
 	);
@@ -807,6 +809,9 @@ const uint8_t lcd_char_bar_full[8] =
 TimerHandle_t  backlight_timer;
 uint8_t lcd_splash = 1;
 
+#define LCD_KOTEL1_PAGE_LINES_CNT 10
+uint8_t lcd_kotel1_page_line = 0;
+
 void backlight_timer_cb(xTimerHandle tmr)   // rtos
 {
     uint8_t pin = (uint8_t)pvTimerGetTimerID(tmr); // rtos
@@ -921,6 +926,8 @@ void menu_next()
     menu_idx++;
     if ( menu_idx >= PAGE_MAX ) menu_idx = PAGE_MAIN;
     last_key_press = millis();
+
+    if ( menu_idx == PAGE_KOTEL1_RATE ) lcd_kotel1_page_line = 0;
 }
 
 void menu_prev()
@@ -929,6 +936,8 @@ void menu_prev()
     menu_idx--;
     if ( menu_idx == PAGE_MAIN ) menu_idx = PAGE_MAX - 1;
     last_key_press = millis();
+
+    if ( menu_idx == PAGE_KOTEL1_RATE ) lcd_kotel1_page_line = 0;
 }
 
 int round_int_100(int val)
@@ -1132,17 +1141,45 @@ void lcd_init2()
 
 void show_page_kotel1_rate()
 {
-    char str[30] = "";
+    //char str[30] = "";
     lcd_print(0, "*** KOTEL1 RATE ****");
 
-    snprintf(str, 21, "current,L:   %3d.%03d", i_fuel_consump_now / 100000, (i_fuel_consump_now % 100000) / 100);
-    lcd_print(1, str);
+    char lines[LCD_KOTEL1_PAGE_LINES_CNT][30];
 
-    snprintf(str, 21, "  today,L:   %3d.%03d", i_fuel_consump_today / 100000, (i_fuel_consump_today % 100000) / 100);
-    lcd_print(2, str);    
+    snprintf(lines[0], 21, "current    %3d.%03d L", i_fuel_consump_now / 100000, (i_fuel_consump_now % 100000) / 100);
+    snprintf(lines[1], 21, "current     %02d:%02d:%02d", fpump_on_duration  / 1000 / 60 / 60
+                                                    , fpump_on_duration  / 1000 / 60
+                                                    , fpump_on_duration  / 1000 % 60
+            );
 
-    snprintf(str, 21, "lastday,L:   %3d.%03d", i_fuel_consump_today / 100000, (i_fuel_consump_today % 100000) / 100);
-    lcd_print(3, str);
+    snprintf(lines[2], 21, "   last    %3d.%03d L", i_fuel_consump_last / 100000, (i_fuel_consump_last % 100000) / 100);
+    snprintf(lines[3], 21, "   last     %02d:%02d:%02d", fpump_on_duration_prev  / 1000 / 60 / 60
+                                                    , fpump_on_duration_prev  / 1000 / 60
+                                                    , fpump_on_duration_prev  / 1000 % 60
+            );
+
+    snprintf(lines[4], 21, "  today      %3d.%03d L", i_fuel_consump_today / 100000, (i_fuel_consump_today % 100000) / 100);
+    snprintf(lines[5], 21, "  today     %02d:%02d:%02d", fpump_today_time / 60 / 60  
+                                                    , fpump_today_time / 60
+                                                    , fpump_today_time % 60
+            );
+
+    snprintf(lines[6], 21, "   prev      %3d.%03d L", i_fuel_consump_prev / 100000, (i_fuel_consump_prev % 100000) / 100);
+    snprintf(lines[7], 21, "   prev     %02d:%02d:%02d", fpump_prev_time / 60 / 60
+                                                    , fpump_prev_time / 60
+                                                    , fpump_prev_time % 60
+            );
+
+    snprintf(lines[8], 21, "  total    %3d.%03d L", i_fuel_consump_total / 100000, (i_fuel_consump_total % 100000) / 100);
+    snprintf(lines[9], 21, "  total     %02d:%02d:%02d", fpump_work_time / 60 / 60
+                                                    , fpump_work_time / 60
+                                                    , fpump_work_time % 60
+            );
+
+    lcd_print(1, lines[lcd_kotel1_page_line] ); 
+    lcd_print(2, lines[lcd_kotel1_page_line+1] ); 
+    lcd_print(3, lines[lcd_kotel1_page_line+2] ); 
+
 
     //strcpy(str, "lastday,L:   %3d.%03d", i_fuel_consump_total / 100000, (i_fuel_consump_total % 100000) / 100);
     //lcd_print(3, str);         
@@ -1765,7 +1802,9 @@ void button1_short_press(void *args, uint8_t *state)
                 }
             break;
         case PAGE_KOTEL1_RATE:
-            // TODO: scroll to bottom
+            // TODO: scroll to top
+            if ( lcd_kotel1_page_line > 0 ) lcd_kotel1_page_line--;
+            else buzzer( BUZZER_BEEP_ERROR );
             break;
         case PAGE_KOTEL2_RATE:
             // TODO: scroll to bottom
@@ -1853,6 +1892,11 @@ void button2_short_press(uint8_t pin, uint8_t *state)
             break;
         case PAGE_KOTEL1_RATE:
             // TODO: scroll to bottom
+            lcd_kotel1_page_line++;
+            if ( lcd_kotel1_page_line == (LCD_KOTEL1_PAGE_LINES_CNT-3) ) {
+                lcd_kotel1_page_line = 0;
+                buzzer( BUZZER_BEEP_ERROR );
+            }            
             break;
         case PAGE_KOTEL2_RATE:
             // TODO: scroll to bottom
@@ -1890,6 +1934,9 @@ void button2_long_press(uint8_t pin, uint8_t *state)
     switch ( menu_idx ) {
         case PAGE_MAIN:
             GPIO_INVERT(ESC_GPIO);
+            char str[21];
+            snprintf(str, 21, "  Night mode is %3s ", GPIO_ALL_GET( ESC_GPIO ) ? "ON " : "OFF");
+            show_display_alert("                    ", str, NULL);             
             break;
         case PAGE_KOTEL1_RATE:
             break;
@@ -1918,12 +1965,15 @@ void button3_short_press(uint8_t pin, uint8_t *state)
 {
     uint8_t backlight = LCD_BACKLIGHT_STATE;
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
-    if ( backlight == 0 && sensors_param.lcden > 0) return;
+    //if ( backlight == 0 && sensors_param.lcden > 0) return;
     buzzer( BUZZER_BEEP_SHORT );
 
     switch ( menu_idx ) {
         case PAGE_MAIN:
             GPIO_INVERT( VENT_GPIO );
+            char str[21];
+            snprintf(str, 21, " Ventilation is %3s ", GPIO_ALL_GET( VENT_GPIO ) ? "ON " : "OFF");
+            show_display_alert("                    ", str, NULL);
             break;
         case PAGE_KOTEL1_RATE:
         case PAGE_KOTEL2_RATE:
@@ -1950,6 +2000,9 @@ void button3_long_press(uint8_t pin, uint8_t *state)
     switch ( menu_idx ) {
         case PAGE_MAIN:
             switch_schedule();
+            char str[21];
+            snprintf(str, 21, "   Schedule is %3s  ", schedule ? "ON " : "OFF");
+            show_display_alert("                    ", str, NULL);            
             break;
         case PAGE_KOTEL1_RATE:
             break;
@@ -1977,7 +2030,7 @@ void button4_short_press(uint8_t pin, uint8_t *state)
 {
     uint8_t backlight = LCD_BACKLIGHT_STATE;
     turn_on_lcd_backlight( BACKLIGHT_GPIO, NULL);
-    if ( backlight == 0 && sensors_param.lcden > 0) return;
+    //if ( backlight == 0 && sensors_param.lcden > 0) return;
     menu_next();
     buzzer( BUZZER_BEEP_SHORT );
     last_key_press = millis();
@@ -1995,22 +2048,16 @@ void button4_long_press(uint8_t pin, uint8_t *state)
             GPIO_ALL( PUMP2_GPIO, 0);
             break;
         case PAGE_KOTEL1_RATE:
-            break;
         case PAGE_KOTEL2_RATE:
-            break;
         case PAGE_MENU_WORKMODE:
-            break;
         case PAGE_MENU_SCHEDULE:
-            break;
         case PAGE_MENU_TEMPSET:
-            break;
         case PAGE_MENU_HYST:
-            break;
         case PAGE_MENU_PUMP_TEMP:
-            break;
         case PAGE_MENU_VERSION:
-            break;
         default:
+            buzzer( BUZZER_BEEP_DOUBLE_SHORT ); 
+            menu_idx = PAGE_MAIN;
             break;
     }
 
