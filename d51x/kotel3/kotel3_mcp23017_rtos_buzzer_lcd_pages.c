@@ -1,5 +1,5 @@
 static const char* UTAG = "USR";
-#define FW_VER "3.107"
+#define FW_VER "3.108"
 
 /*
 Количество настроек
@@ -558,6 +558,11 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 	uint32_t hour = (min / 60 % 24);
 	min = min % 60;
 
+	uint32_t _sec = fpump_today_time % 60;
+	uint32_t _min = fpump_today_time / 60;
+	uint32_t _hour = _min / 60;
+	_min = _min % 60;
+    
     //os_sprintf(HTTPBUFF, "Fuel Pump: <b>%s</b> &nbsp; count: <b>%d</b>", fpump_state ? "ON" : "OFF", fpump_on_cnt );
 	os_sprintf(HTTPBUFF, "<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>"
 
@@ -581,12 +586,16 @@ void webfunc_print_fuel_pump_data(char *pbuf)
 							, i_fuel_consump_now / 100000
                             , (i_fuel_consump_now % 100000) / 100
 	);	
+	os_sprintf(HTTPBUFF, 	"<tr align=right>"
+								"<td><b>Today:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
+							"</tr>"
+							, _hour, _min, _sec
+							, i_fuel_consump_today / 100000, (i_fuel_consump_today % 100000) / 100
+	);
+
     os_sprintf(HTTPBUFF, "</table>");
 
-	uint32_t _sec = fpump_today_time % 60;
-	uint32_t _min = fpump_today_time / 60;
-	uint32_t _hour = _min / 60;
-	_min = _min % 60;
+
 
     os_sprintf(HTTPBUFF, "<details><summary></summary>");
     os_sprintf(HTTPBUFF, "<table width='100%%' cellpadding='2' cellspacing='2' cols='3'>");
@@ -601,12 +610,7 @@ void webfunc_print_fuel_pump_data(char *pbuf)
                             , (i_fuel_consump_last % 100000) / 100
 	);
 
-	os_sprintf(HTTPBUFF, 	"<tr align=right>"
-								"<td><b>Today:</b></td><td>%02d:%02d:%02d</td><td>%d.%03d</td>"
-							"</tr>"
-							, _hour, _min, _sec
-							, i_fuel_consump_today / 100000, (i_fuel_consump_today % 100000) / 100
-	);
+
 
 
 	_sec = fpump_prev_time % 60;
@@ -1893,7 +1897,7 @@ void button2_short_press(uint8_t pin, uint8_t *state)
         case PAGE_KOTEL1_RATE:
             // TODO: scroll to bottom
             lcd_kotel1_page_line++;
-            if ( lcd_kotel1_page_line == (LCD_KOTEL1_PAGE_LINES_CNT-3) ) {
+            if ( lcd_kotel1_page_line == (LCD_KOTEL1_PAGE_LINES_CNT-2) ) {
                 lcd_kotel1_page_line = 0;
                 buzzer( BUZZER_BEEP_ERROR );
             }            
